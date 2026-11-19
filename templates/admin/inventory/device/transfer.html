@@ -1,0 +1,44 @@
+{% extends "admin/base_site.html" %}
+{% load i18n admin_urls static %}
+
+{% block title %}{{ title }} | {{ site_title|default:_('Django site admin') }}{% endblock %}
+{% block breadcrumbs %}
+<div class="breadcrumbs">
+  <a href="{% url 'admin:index' %}">{% translate 'Home' %}</a>
+  &rsaquo; <a href="{% url 'admin:app_list' app_label='inventory' %}">Envanter</a>
+  &rsaquo; <a href="{{ change_url }}">{{ device }}</a>
+  &rsaquo; {{ title }}
+</div>
+{% endblock %}
+
+{% block content %}
+<div id="content-main">
+  <h1>{{ title }}</h1>
+  <p><strong>Cihaz:</strong> {{ device }}</p>
+  <p><strong>Mevcut kullanıcı:</strong>
+    {% if current_assignment %}{{ current_assignment.user }}{% else %}Atanmamış{% endif %}
+  </p>
+  <p>Kaydettiğinizde mevcut atamanın teslim zamanı otomatik yazılır ve yeni atama açık olarak başlatılır.</p>
+
+  <form method="post" novalidate>
+    {% csrf_token %}
+    {% if form.non_field_errors %}<div class="errornote">{{ form.non_field_errors }}</div>{% endif %}
+    <fieldset class="module aligned">
+      {% for field in form %}
+        <div class="form-row{% if field.errors %} errors{% endif %}">
+          <div>
+            {{ field.errors }}
+            {{ field.label_tag }}
+            {{ field }}
+            {% if field.help_text %}<div class="help">{{ field.help_text }}</div>{% endif %}
+          </div>
+        </div>
+      {% endfor %}
+    </fieldset>
+    <div class="submit-row">
+      <input type="submit" value="Atamayı kaydet" class="default">
+      <a href="{{ change_url }}" class="closelink">İptal</a>
+    </div>
+  </form>
+</div>
+{% endblock %}

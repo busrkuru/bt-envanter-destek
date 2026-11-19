@@ -1,0 +1,62 @@
+{% extends "base.html" %}
+{% block title %}Genel bakış | BT Envanter ve Destek{% endblock %}
+{% block content %}
+<section class="welcome">
+  <div>
+    <h1>Genel bakış</h1>
+    <p class="sub">{% if request.user.role == "unit_user" %}Cihazlarını ve arıza bildirimlerinin durumunu buradan takip edebilirsin.{% else %}Yetki kapsamındaki cihazları ve destek kayıtlarını buradan takip edebilirsin.{% endif %}</p>
+  </div>
+  <div class="actions">
+    <a class="button" href="{% url 'inventory:issue_create' %}">Arıza bildir</a>
+    <a class="button secondary-button" href="{% url 'inventory:device_list' %}">{% if request.user.role == "unit_user" %}Cihazlarımı gör{% else %}Cihazları gör{% endif %}</a>
+  </div>
+</section>
+
+<section class="cards" aria-label="Özet bilgiler">
+  <a class="card card-link" href="{% url 'inventory:device_list' %}"><span>{% if request.user.role == "unit_user" %}Atanmış cihazlar{% else %}Yetki kapsamındaki cihazlar{% endif %}</span><strong>{{ device_count }}</strong></a>
+  <a class="card card-link" href="{% url 'inventory:device_list' %}"><span>Kullanımdaki cihazlar</span><strong>{{ active_device_count }}</strong></a>
+  <a class="card card-link" href="{% url 'inventory:device_list' %}"><span>Onarımdaki cihazlar</span><strong>{{ repair_count }}</strong></a>
+  <a class="card card-link" href="{% url 'inventory:issue_list' %}"><span>Açık arıza bildirimleri</span><strong>{{ open_issue_count }}</strong></a>
+</section>
+
+<section class="panel">
+  <h2>Cihazlarda ara</h2>
+  <p class="sub">Demirbaş numarası, kullanıcı adı, IP, MAC, seri numarası, marka veya modelle arayabilirsin.</p>
+  <form class="search" action="{% url 'inventory:device_list' %}" method="get" role="search">
+    <label class="visually-hidden" for="dashboard-device-search">Cihazlarda ara</label>
+    <input id="dashboard-device-search" type="search" name="q" placeholder="Ör. TEST-PC-001 veya 192.168.1.20">
+    <button class="button" type="submit">Ara</button>
+  </form>
+</section>
+
+<div class="dashboard-grid">
+  <section class="panel">
+    <h2>{% if request.user.role == "unit_user" %}Arıza bildirimlerim{% else %}Son arıza bildirimleri{% endif %}</h2>
+    {% if recent_issues %}
+      <div class="table-wrap"><table>
+        <thead><tr><th scope="col">Konu</th><th scope="col">Cihaz</th>{% if request.user.role != "unit_user" %}<th scope="col">Bildiren</th><th scope="col">Atanan IT sorumlusu</th>{% endif %}<th scope="col">Durum</th><th scope="col">Öncelik</th></tr></thead>
+        <tbody>{% for issue in recent_issues %}
+          <tr>
+            <td><a href="{% url 'inventory:issue_detail' issue_id=issue.pk %}">{{ issue.title }}</a></td>
+            <td>{{ issue.device.asset_tag }}</td>
+            {% if request.user.role != "unit_user" %}<td>{{ issue.reported_by }}</td><td>{{ issue.assigned_to|default:"Atanmadı" }}</td>{% endif %}
+            <td><span class="pill">{{ issue.get_status_display }}</span></td>
+            <td>{{ issue.get_priority_display }}</td>
+          </tr>
+        {% endfor %}</tbody>
+      </table></div>
+    {% else %}<p class="empty">Görüntülenecek arıza bildirimi yok.</p>{% endif %}
+    <p><a href="{% url 'inventory:issue_list' %}">{% if request.user.role == "unit_user" %}Tüm bildirimlerimi gör{% else %}Tüm arıza bildirimlerine git{% endif %}</a></p>
+  </section>
+
+  <section class="panel">
+    <h2>Hızlı işlemler</h2>
+    <p class="sub">{% if request.user.role == "unit_user" %}Cihazınla ilgili sorun bildir veya açık bildirimlerinin durumunu takip et.{% else %}Cihaz envanterini ve destek kayıtlarını yönet.{% endif %}</p>
+    <div class="actions">
+      <a class="button" href="{% url 'inventory:issue_create' %}">Yeni arıza bildir</a>
+      <a class="button secondary-button" href="{% url 'inventory:issue_list' %}">Arıza bildirimlerini aç</a>
+      {% if request.user.role != "unit_user" %}<a class="button secondary-button" href="{% url 'inventory:reports' %}">Raporları görüntüle</a>{% endif %}
+    </div>
+  </section>
+</div>
+{% endblock %}

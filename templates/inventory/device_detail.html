@@ -1,0 +1,82 @@
+{% extends "base.html" %}
+{% block title %}{{ device.asset_tag }} | Cihaz ayrıntısı{% endblock %}
+{% block content %}
+<div class="detail-heading">
+  <div>
+    <h1>{{ device.asset_tag }}</h1>
+    <p class="sub">{{ device.device_type }}{% if device.brand or device.model_name %} · {{ device.brand }} {{ device.model_name }}{% endif %}</p>
+  </div>
+  <div class="actions">
+    <a class="button secondary-button" href="{% url 'inventory:device_list' %}">Cihaz listesine dön</a>
+    {% if request.user.is_staff %}<a class="button secondary-button" href="{% url 'admin:inventory_device_change' device.pk %}">Cihaz kaydını yönet</a>{% endif %}
+    <a class="button" href="{% url 'inventory:issue_create' %}?device={{ device.pk }}">Bu cihaz için arıza bildir</a>
+  </div>
+</div>
+
+<div class="detail-grid">
+  <section class="panel">
+    <h2>Cihaz bilgileri</h2>
+    <dl class="info-grid">
+      <div><dt>Durum</dt><dd><span class="pill">{{ device.get_status_display }}</span></dd></div>
+      <div><dt>Demirbaş numarası</dt><dd>{{ device.asset_tag }}</dd></div>
+      <div><dt>Departman / birim</dt><dd>{{ device.department }}{% if device.unit %} / {{ device.unit.name }}{% endif %}</dd></div>
+      <div><dt>Seri numarası</dt><dd>{{ device.serial_number|default:"—" }}</dd></div>
+      <div><dt>IP adresi</dt><dd>{{ device.ip_address|default:"—" }}</dd></div>
+      <div><dt>MAC adresi</dt><dd>{{ device.mac_address|default:"—" }}</dd></div>
+      {% if can_view_internal_history %}<div><dt>Aktif kayıt</dt><dd>{% if device.is_active %}Evet{% else %}Hayır{% endif %}</dd></div>{% endif %}
+      {% if can_view_internal_history and device.notes %}<div><dt>İç not</dt><dd>{{ device.notes|linebreaksbr }}</dd></div>{% endif %}
+    </dl>
+  </section>
+
+  <section class="panel">
+    <h2>Atama özeti</h2>
+    {% if current_assignment %}
+      <p><strong>Atanan kullanıcı</strong><br>{{ current_assignment.user }}</p>
+      {% if can_view_internal_history %}<p><strong>Atama tarihi</strong><br>{{ current_assignment.started_at|date:"d.m.Y H:i" }}</p>{% endif %}
+    {% else %}<p class="empty">Cihaz şu anda bir kullanıcıya atanmamış.</p>{% endif %}
+    {% if not can_view_internal_history %}<p class="sub">Bir sorun varsa yukarıdaki düğmeyle bu cihaz için arıza bildir.</p>{% endif %}
+  </section>
+</div>
+
+<section class="panel">
+  <h2>Bileşenler</h2>
+  <p class="table-caption">Bu cihaza takılı donanım bileşenleri.</p>
+  <div class="table-wrap"><table><thead><tr><th scope="col">Tür</th><th scope="col">Marka / model</th><th scope="col">Seri numarası</th><th scope="col">Teknik özellikler</th>{% if can_view_internal_history %}<th scope="col">Durum / tarihler</th>{% endif %}</tr></thead><tbody>
+  {% for component in components %}
+    <tr>
+      <td>{{ component.component_type }}</td>
+      <td>{{ component.brand }} {{ component.model_name }}</td>
+      <td>{{ component.serial_number|default:"—" }}</td>
+      <td><dl class="spec-list">{% for key, value in component.specifications.items %}<div><dt>{{ key }}:</dt><dd>{{ value }}</dd></div>{% empty %}<div><dd>Ek özellik girilmemiş.</dd></div>{% endfor %}</dl></td>
+      {% if can_view_internal_history %}<td>{% if component.removed_at %}Çıkarıldı: {{ component.removed_at|date:"d.m.Y" }}{% else %}Takılı{% endif %}{% if component.installed_at %}<br>Takılma: {{ component.installed_at|date:"d.m.Y" }}{% endif %}</td>{% endif %}
+    </tr>
+  {% empty %}<tr><td colspan="{% if can_view_internal_history %}5{% else %}4{% endif %}" class="empty">{% if can_view_internal_history %}Bu cihaza henüz bileşen eklenmemiş.{% else %}Görüntülenecek takılı bileşen yok.{% endif %}</td></tr>{% endfor %}
+  </tbody></table></div>
+</section>
+
+{% if can_view_internal_history %}
+<details class="panel history-panel">
+  <summary><strong>Atama geçmişi</strong> <span class="sub">({{ assignments|length }} kayıt)</span></summary>
+  <div class="table-wrap"><table><thead><tr><th scope="col">Kullanıcı</th><th scope="col">Atama tarihi</th><th scope="col">Teslim tarihi</th><th scope="col">Atamayı yapan</th><th scope="col">Not</th></tr></thead><tbody>
+  {% for assignment in assignments %}<tr><td>{{ assignment.user }}</td><td>{{ assignment.started_at|date:"d.m.Y H:i" }}</td><td>{{ assignment.ended_at|date:"d.m.Y H:i"|default:"Devam ediyor" }}</td><td>{{ assignment.assigned_by }}</td><td>{{ assignment.notes|default:"—" }}</td></tr>
+  {% empty %}<tr><td colspan="5" class="empty">Atama geçmişi yok.</td></tr>{% endfor %}
+  </tbody></table></div>
+</details>
+
+<details class="panel history-panel">
+  <summary><strong>Fatura ve garanti bilgileri</strong> <span class="sub">({{ invoices|length }} kayıt)</span></summary>
+  <div class="table-wrap"><table><thead><tr><th scope="col">Fatura no</th><th scope="col">Tedarikçi</th><th scope="col">Fatura tarihi</th><th scope="col">Tutar</th><th scope="col">Garanti bitişi</th><th scope="col">Not</th></tr></thead><tbody>
+  {% for invoice in invoices %}<tr><td>{{ invoice.invoice_number|default:"—" }}</td><td>{{ invoice.vendor|default:"—" }}</td><td>{{ invoice.invoice_date|date:"d.m.Y"|default:"—" }}</td><td>{% if invoice.amount %}{{ invoice.amount }} {{ invoice.currency }}{% else %}—{% endif %}</td><td>{{ invoice.warranty_until|date:"d.m.Y"|default:"—" }}</td><td>{{ invoice.notes|default:"—" }}</td></tr>
+  {% empty %}<tr><td colspan="6" class="empty">Fatura kaydı yok.</td></tr>{% endfor %}
+  </tbody></table></div>
+</details>
+{% endif %}
+
+<section class="panel">
+  <h2>{% if can_view_internal_history %}Arıza bildirimleri{% else %}Arıza bildirimlerim{% endif %}</h2>
+  <div class="table-wrap"><table><thead><tr><th scope="col">Konu</th>{% if can_view_internal_history %}<th scope="col">Bildiren</th>{% endif %}<th scope="col">Durum</th><th scope="col">Öncelik</th><th scope="col">Açılış tarihi</th></tr></thead><tbody>
+  {% for issue in issues %}<tr><td><a href="{% url 'inventory:issue_detail' issue_id=issue.pk %}">{{ issue.title }}</a></td>{% if can_view_internal_history %}<td>{{ issue.reported_by }}</td>{% endif %}<td><span class="pill">{{ issue.get_status_display }}</span></td><td>{{ issue.get_priority_display }}</td><td>{{ issue.created_at|date:"d.m.Y H:i" }}</td></tr>
+  {% empty %}<tr><td colspan="{% if can_view_internal_history %}5{% else %}4{% endif %}" class="empty">{% if can_view_internal_history %}Bu cihaz için henüz arıza bildirimi yok.{% else %}Bu cihaz için açtığın bir arıza bildirimi yok.{% endif %}</td></tr>{% endfor %}
+  </tbody></table></div>
+</section>
+{% endblock %}

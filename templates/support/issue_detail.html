@@ -1,0 +1,127 @@
+{% extends "base.html" %}
+{% block title %}{{ issue.title }} | Arıza bildirimi{% endblock %}
+{% block content %}
+<p><a href="{% url 'inventory:issue_list' %}">← {% if can_manage %}Arıza bildirimlerine dön{% else %}Bildirimlerime dön{% endif %}</a></p>
+<div class="detail-heading">
+  <div>
+    <h1>{{ issue.title }}</h1>
+    <p class="sub">{{ issue.device.asset_tag }} · Açılış: {{ issue.created_at|date:"d.m.Y H:i" }}</p>
+  </div>
+  <div class="actions"><span class="pill status-{{ issue.status }}">{{ issue.get_status_display }}</span><span class="priority priority-{{ issue.priority }}">{{ issue.get_priority_display }} öncelik</span></div>
+</div>
+
+<section class="panel issue-progress" aria-label="Arıza çözüm akışı">
+  <div class="progress-heading">
+    <div><h2>Çözüm süreci</h2><p class="sub">Güncel adım: <strong>{{ issue.get_status_display }}</strong></p></div>
+  </div>
+  <ol class="progress-steps">
+    {% for step in workflow_steps %}
+      <li class="{% if forloop.counter0 < workflow_current_step %}is-complete{% elif forloop.counter0 == workflow_current_step %}is-current{% endif %}"{% if forloop.counter0 == workflow_current_step %} aria-current="step"{% endif %}>
+        <span class="step-marker">{% if forloop.counter0 < workflow_current_step %}✓{% else %}{{ forloop.counter }}{% endif %}</span>
+        <span>{{ step.1 }}</span>
+      </li>
+    {% endfor %}
+  </ol>
+  <p class="status-guidance status-guidance-{{ issue.status }}">{{ status_guidance }}</p>
+</section>
+
+{% if can_confirm_resolution %}
+<section class="panel resolution-confirmation" aria-labelledby="confirm-resolution-title">
+  <h2 id="confirm-resolution-title">{% if issue.status == "resolved" %}Sorun çözüldü mü?{% else %}Sorun tekrar mı başladı?{% endif %}</h2>
+  <p class="sub">{% if issue.status == "resolved" %}Onaylarsan bildirim kapanır. Sorun devam ediyorsa yeniden açıp IT ekibine iletebilirsin.{% else %}Kaydı yeniden açarsan IT ekibi tekrar inceleyebilir.{% endif %}</p>
+  <form method="post" class="actions">
+    {% csrf_token %}<input type="hidden" name="action" value="reporter_confirmation">
+    {% if issue.status == "resolved" %}
+      <button class="button" type="submit" name="confirmation" value="fixed">Evet, sorun çözüldü</button>
+      <button class="button secondary-button" type="submit" name="confirmation" value="not_fixed">Hayır, sorun devam ediyor</button>
+    {% else %}<button class="button secondary-button" type="submit" name="confirmation" value="reopen">Sorun tekrar etti, yeniden aç</button>{% endif %}
+  </form>
+</section>
+{% endif %}
+
+<div class="detail-grid">
+  <section class="panel">
+    <h2>Arıza bilgileri</h2>
+    <dl class="info-grid">
+      <div><dt>Cihaz</dt><dd><a href="{% url 'inventory:device_detail' device_id=issue.device_id %}">{{ issue.device.asset_tag }}</a></dd></div>
+      {% if can_manage %}<div><dt>Bildiren kullanıcı</dt><dd>{{ issue.reported_by }}</dd></div><div><dt>Atanan IT sorumlusu</dt><dd>{{ issue.assigned_to|default:"Henüz atanmadı" }}</dd></div>{% endif %}
+      <div><dt>Öncelik</dt><dd><span class="priority priority-{{ issue.priority }}">{{ issue.get_priority_display }}</span></dd></div>
+      <div><dt>Durum</dt><dd><span class="pill status-{{ issue.status }}">{{ issue.get_status_display }}</span></dd></div>
+      {% if issue.resolved_at %}<div><dt>Çözülme tarihi</dt><dd>{{ issue.resolved_at|date:"d.m.Y H:i" }}</dd></div>{% endif %}
+    </dl>
+  </section>
+  <section class="panel">
+    <h2>Sorunun açıklaması</h2>
+    <p>{{ issue.description|linebreaksbr }}</p>
+  </section>
+</div>
+
+<section class="panel">
+  <h2>Durum geçmişi</h2>
+  <p class="sub">Arızanın durumundaki değişiklikler burada tarih sırasıyla gösterilir.</p>
+  {% if updates %}<ol class="timeline">
+    {% for update in updates %}<li>
+      <span class="pill status-{{ update.new_status }}">{% if update.old_status_label %}{{ update.old_status_label }} → {% endif %}{{ update.new_status_label }}</span>
+      <div class="timeline-meta"><strong>{{ update.author.get_full_name|default:update.author.username }}</strong><small>{{ update.created_at|date:"d.m.Y H:i" }}</small></div>
+      {% if update.activity_note %}<p class="timeline-message">{{ update.activity_note }}</p>{% endif %}
+    </li>{% endfor %}
+  </ol>{% else %}<p class="empty">Henüz durum güncellemesi yok. Mevcut durum: <strong>{{ issue.get_status_display }}</strong>.</p>{% endif %}
+</section>
+
+{% if can_manage %}
+<details class="panel history-panel" open>
+  <summary><strong>IT işlemleri</strong></summary>
+  <p class="sub">Durum adımını düğmelerle ilerlet; öncelik ve sorumlu atamasını aşağıdan düzenle.</p>
+  {% if transition_error %}<p class="form-error" role="alert">{{ transition_error }}</p>{% endif %}
+  {% if can_quick_start or available_transitions %}
+  <form method="post" class="transition-actions">
+    {% csrf_token %}
+    {% if can_quick_start %}
+      <input type="hidden" name="action" value="quick_start">
+      <strong>Sonraki adım</strong>
+      <button class="button" type="submit">Üstlen ve işe başla</button>
+    {% else %}
+    <input type="hidden" name="action" value="transition">
+    <strong>Sonraki adım</strong>
+    {% if issue.status == "in_progress" or issue.status == "waiting" %}<label class="field-label" for="update-note">{% if issue.status == "in_progress" %}Kullanıcıya not <span class="sub">(beklemeye alırken zorunlu)</span>{% else %}Güncelleme notu <span class="sub">(isteğe bağlı)</span>{% endif %}</label><textarea id="update-note" class="transition-note" name="update_note" maxlength="500" rows="2" placeholder="{% if issue.status == 'waiting' %}Örn. İstenen bilgi geldi, incelemeye devam ediyorum.{% else %}Örn. VPN bağlantısını yeniden deneyip sonucu paylaşın.{% endif %}">{{ transition_note }}</textarea>{% if issue.status == "in_progress" %}<small class="sub">“Beklemeye al” seçildiğinde bu not kullanıcıya gösterilir. Beklenen adımı açıkça yaz.</small>{% endif %}{% endif %}
+    <div class="actions">
+      {% for value, label in available_transitions %}
+        <button class="button{% if value == 'waiting' %} secondary-button{% endif %}" type="submit" name="next_status" value="{{ value }}">
+          {% if value == "in_progress" and issue.status == "new" %}İşe başla{% elif value == "in_progress" %}Çalışmaya devam et{% elif value == "waiting" %}Beklemeye al{% elif value == "resolved" %}Çözüldü olarak işaretle{% elif value == "closed" %}Kaydı kapat{% else %}{{ label }}{% endif %}
+        </button>
+      {% endfor %}
+    </div>
+    {% endif %}
+  </form>
+  {% else %}<p class="empty">{% if issue.status == "new" %}Bu kayıt başka bir IT sorumlusuna atanmış; işe başlatma işlemini atanan sorumlu yapabilir.{% else %}Bu kayıt için başka bir durum adımı bulunmuyor.{% endif %}</p>{% endif %}
+  <hr class="section-divider">
+  <p class="sub">Önceliği ve sorumlu IT çalışanını değiştir.</p>
+  <form method="post">
+    {% csrf_token %}<input type="hidden" name="action" value="manage">
+    {{ management_form.non_field_errors }}
+    <div class="issue-management">
+      {% for field in management_form %}<p{% if field.errors %} class="errors"{% endif %}>
+        <label class="field-label" for="{{ field.id_for_label }}">{{ field.label }}</label>
+        {{ field }}{{ field.errors }}{% if field.help_text %}<small>{{ field.help_text }}</small>{% endif %}
+      </p>{% endfor %}
+      <button class="button" type="submit">Atama ve önceliği kaydet</button>
+    </div>
+  </form>
+</details>
+{% endif %}
+{% if can_manage and issue.status == "in_progress" or can_manage and issue.status == "waiting" %}<script>
+  (() => {
+    const form = document.querySelector(".transition-actions");
+    const note = document.getElementById("update-note");
+    if (!form || !note) return;
+    form.addEventListener("submit", (event) => {
+      const submitter = event.submitter;
+      const isWaiting = submitter && submitter.name === "next_status" && submitter.value === "waiting";
+      if (isWaiting && !note.value.trim()) {
+        event.preventDefault();
+        note.focus();
+      }
+    });
+  })();
+</script>{% endif %}
+{% endblock %}

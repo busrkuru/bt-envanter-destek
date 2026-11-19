@@ -1,0 +1,89 @@
+{% extends "base.html" %}
+{% block title %}Raporlar | BT Envanter ve Destek{% endblock %}
+{% block content %}
+<div class="welcome">
+  <div>
+    <h1>Genel raporlar</h1>
+    <p class="sub">Raporlar yalnızca hesabının erişebildiği departman ve birim verilerini içerir.</p>
+  </div>
+  <div class="actions">
+    <a class="button" href="{% url 'inventory:export_devices_csv' %}">Cihaz raporunu indir (CSV)</a>
+    <a class="button secondary-button" href="{% url 'inventory:export_issues_csv' %}">Arıza raporunu indir (CSV)</a>
+  </div>
+</div>
+
+<section class="cards" aria-label="Envanter özeti">
+  <a class="card card-link" href="{% url 'inventory:device_list' %}"><span>Toplam cihaz</span><strong>{{ device_count }}</strong></a>
+  <a class="card card-link" href="{% url 'inventory:device_list' %}"><span>Kullanımdaki cihazlar</span><strong>{{ active_device_count }}</strong></a>
+  <a class="card card-link" href="{% url 'inventory:device_list' %}"><span>Onarımdaki cihazlar</span><strong>{{ repair_count }}</strong></a>
+  <a class="card card-link" href="{% url 'inventory:issue_list' %}"><span>Açık arıza bildirimleri</span><strong>{{ open_issue_count }}</strong></a>
+</section>
+<p class="table-caption">CSV dosyaları yalnızca görüntüleme yetkin olan kayıtları içerir.</p>
+
+<div class="report-grid">
+  <section class="panel">
+    <h2>Departmanlara göre cihazlar</h2>
+    <div class="table-wrap"><table><thead><tr><th scope="col">Departman</th><th scope="col">Cihaz sayısı</th></tr></thead><tbody>
+      {% for row in department_summary %}<tr><td>{{ row.department__name }}</td><td>{{ row.count }}</td></tr>{% empty %}<tr><td colspan="2" class="empty">Raporlanacak cihaz yok.</td></tr>{% endfor %}
+    </tbody></table></div>
+  </section>
+
+  <section class="panel">
+    <h2>Birimlere göre cihazlar</h2>
+    <div class="table-wrap"><table><thead><tr><th scope="col">Departman</th><th scope="col">Birim</th><th scope="col">Cihaz sayısı</th></tr></thead><tbody>
+      {% for row in unit_summary %}<tr><td>{{ row.department__name }}</td><td>{{ row.unit__name|default:"Departman düzeyinde" }}</td><td>{{ row.count }}</td></tr>{% empty %}<tr><td colspan="3" class="empty">Raporlanacak cihaz yok.</td></tr>{% endfor %}
+    </tbody></table></div>
+  </section>
+
+  <section class="panel">
+    <h2>Cihaz türlerine göre dağılım</h2>
+    <div class="table-wrap"><table><thead><tr><th scope="col">Cihaz türü</th><th scope="col">Cihaz sayısı</th></tr></thead><tbody>
+      {% for row in device_type_summary %}<tr><td>{{ row.device_type__name }}</td><td>{{ row.count }}</td></tr>{% empty %}<tr><td colspan="2" class="empty">Raporlanacak cihaz yok.</td></tr>{% endfor %}
+    </tbody></table></div>
+  </section>
+
+  <section class="panel">
+    <h2>Cihaz durumları</h2>
+    <div class="table-wrap"><table><thead><tr><th scope="col">Durum</th><th scope="col">Cihaz sayısı</th></tr></thead><tbody>
+      {% for row in device_status_summary %}<tr><td>{{ row.label }}</td><td>{{ row.count }}</td></tr>{% endfor %}
+    </tbody></table></div>
+  </section>
+
+  <section class="panel">
+    <h2>Atama durumu</h2>
+    <div class="table-wrap"><table><thead><tr><th scope="col">Atama</th><th scope="col">Cihaz sayısı</th></tr></thead><tbody>
+      {% for row in assignment_summary %}<tr><td>{{ row.label }}</td><td>{{ row.count }}</td></tr>{% endfor %}
+    </tbody></table></div>
+  </section>
+
+  <section class="panel">
+    <h2>Takılı bileşen türleri</h2>
+    <div class="table-wrap"><table><thead><tr><th scope="col">Bileşen türü</th><th scope="col">Takılı bileşen sayısı</th></tr></thead><tbody>
+      {% for row in component_summary %}<tr><td>{{ row.component_type__name }}</td><td>{{ row.count }}</td></tr>{% empty %}<tr><td colspan="2" class="empty">Takılı bileşen kaydı yok.</td></tr>{% endfor %}
+    </tbody></table></div>
+  </section>
+
+  <section class="panel">
+    <h2>Arıza bildirimlerinin durumu</h2>
+    <div class="table-wrap"><table><thead><tr><th scope="col">Durum</th><th scope="col">Bildirim sayısı</th></tr></thead><tbody>
+      {% for row in status_summary %}<tr><td>{{ row.label }}</td><td>{{ row.count }}</td></tr>{% endfor %}
+    </tbody></table></div>
+  </section>
+
+  {% if can_view_internal_history %}
+  <section class="panel">
+    <h2>Garanti süresi dolmuş cihazlar</h2>
+    <div class="table-wrap"><table><thead><tr><th scope="col">Demirbaş no</th><th scope="col">Tedarikçi</th><th scope="col">Garanti bitişi</th></tr></thead><tbody>
+      {% for invoice in expired_warranties %}<tr><td><a href="{% url 'inventory:device_detail' device_id=invoice.device_id %}">{{ invoice.device.asset_tag }}</a></td><td>{{ invoice.vendor|default:"—" }}</td><td>{{ invoice.warranty_until|date:"d.m.Y" }}</td></tr>{% empty %}<tr><td colspan="3" class="empty">Garanti süresi dolmuş kayıt yok.</td></tr>{% endfor %}
+    </tbody></table></div>
+  </section>
+
+  <section class="panel">
+    <h2>Önümüzdeki 30 günde garantisi bitecek</h2>
+    <div class="table-wrap"><table><thead><tr><th scope="col">Demirbaş no</th><th scope="col">Tedarikçi</th><th scope="col">Garanti bitişi</th></tr></thead><tbody>
+      {% for invoice in upcoming_warranties %}<tr><td><a href="{% url 'inventory:device_detail' device_id=invoice.device_id %}">{{ invoice.device.asset_tag }}</a></td><td>{{ invoice.vendor|default:"—" }}</td><td>{{ invoice.warranty_until|date:"d.m.Y" }}</td></tr>{% empty %}<tr><td colspan="3" class="empty">Önümüzdeki 30 günde bitecek garanti yok.</td></tr>{% endfor %}
+    </tbody></table></div>
+  </section>
+  {% endif %}
+</div>
+{% endblock %}

@@ -1,0 +1,564 @@
+import csv
+from datetime import timedelta
+
+from django.contrib.auth.decorators import login_required
+from django.core.exceptions import PermissionDenied
+from django.core.paginator import Paginator
+from django.db import transaction
+from django.db.models import CharField, Count, Prefetch, Q
+from django.db.models.functions import Cast
+from django.http import HttpResponse
+from django.shortcuts import get_object_or_404, redirect, render
+from django.utils import timezone
+
+from organization.access import is_it_manager, is_primary_admin, scoped_devices
+from support.models import Issue, IssueUpdate
+
+from .models import AssignmentHistory, Device, DeviceComponent, InvoiceInfo
+
+
+def scoped_devices_for(user):
+    """Return all devices visible to this user based on their role and scopes."""
+    return scoped_devices(user)
+
+
+def visible_issues_for(user):
+    """IT sees scoped issues; unit users retain their own issue history."""
+    if user_is_it(user):
+        return Issue.objects.filter(device__in=scoped_devices_for(user))
+    return Issue.objects.filter(reported_by=user)
+
+
+def user_is_it(user):
+    return is_primary_admin(user) or is_it_manager(user)
+
+
+def require_it_access(request):
+    """Keep IT-only screens protected even when their URLs are entered directly."""
+    if not user_is_it(request.user):
+        raise PermissionDenied
+
+
+@login_required
+def dashboard(request):
+    devices = scoped_devices_for(request.user)
+    visible_issues = visible_issues_for(request.user)
+    context = {
+        "device_count": devices.count(),
+        "active_device_count": devices.filter(is_active=True).count(),
+        "open_issue_count": visible_issues.exclude(status__in=[Issue.Status.RESOLVED, Issue.Status.CLOSED]).count(),
+        "repair_count": devices.filter(status=Device.Status.REPAIR).count(),
+        "recent_issues": visible_issues.select_related("device", "reported_by").order_by("-created_at")[:5],
+    }
+    return render(request, "inventory/dashboard.html", context)
+
+
+@login_required
+def device_list(request):
+    query = request.GET.get("q", "").strip()
+    active_assignments = AssignmentHistory.objects.filter(
+        ended_at__isnull=True
+    ).select_related("user")
+    devices = scoped_devices_for(request.user).prefetch_related(
+        Prefetch("assignments", queryset=active_assignments, to_attr="active_assignments")
+    )
+    if query:
+        devices = devices.annotate(
+            component_specs_text=Cast("components__specifications", output_field=CharField())
+        )
+        component_match = Q(components__removed_at__isnull=True) & (
+            Q(components__component_type__name__icontains=query)
+            | Q(components__brand__icontains=query)
+            | Q(components__model_name__icontains=query)
+            | Q(components__serial_number__icontains=query)
+            | Q(component_specs_text__icontains=query)
+        )
+        devices = devices.filter(
+            Q(asset_tag__icontains=query)
+            | Q(serial_number__icontains=query)
+            | Q(ip_address__icontains=query)
+            | Q(mac_address__icontains=query)
+            | Q(brand__icontains=query)
+            | Q(model_name__icontains=query)
+            | Q(device_type__name__icontains=query)
+            | Q(department__name__icontains=query)
+            | Q(unit__name__icontains=query)
+            | Q(assignments__ended_at__isnull=True, assignments__user__username__icontains=query)
+            | Q(assignments__ended_at__isnull=True, assignments__user__first_name__icontains=query)
+            | Q(assignments__ended_at__isnull=True, assignments__user__last_name__icontains=query)
+            | component_match
+        ).distinct()
+    devices = devices.order_by("asset_tag")
+    for device in devices:
+        assignment = device.active_assignments[0] if device.active_assignments else None
+        device.current_holder = assignment.user if assignment else None
+    return render(request, "inventory/device_list.html", {"devices": devices, "query": query})
+
+
+@login_required
+def device_detail(request, device_id):
+    devices = scoped_devices_for(request.user)
+    device = get_object_or_404(
+        devices.prefetch_related(
+            "components__component_type",
+            "assignments__user",
+            "invoice_records",
+        ),
+        pk=device_id,
+    )
+    can_view_internal_history = user_is_it(request.user)
+    components = device.components.select_related("component_type")
+    if not can_view_internal_history:
+        components = components.filter(removed_at__isnull=True)
+
+    current_assignment = (
+        device.assignments.filter(ended_at__isnull=True)
+        .select_related("user")
+        .first()
+    )
+    assignments = (
+        device.assignments.select_related("user", "assigned_by").all()
+        if can_view_internal_history
+        else []
+    )
+    invoices = device.invoice_records.all() if can_view_internal_history else []
+    issues = Issue.objects.filter(device=device).select_related(
+        "reported_by", "assigned_to"
+    )
+    if not can_view_internal_history:
+        issues = issues.filter(reported_by=request.user)
+
+    return render(
+        request,
+        "inventory/device_detail.html",
+        {
+            "device": device,
+            "components": components,
+            "current_assignment": current_assignment,
+            "assignments": assignments,
+            "invoices": invoices,
+            "issues": issues,
+            "can_view_internal_history": can_view_internal_history,
+        },
+    )
+
+
+@login_required
+def reports(request):
+    require_it_access(request)
+    devices = scoped_devices_for(request.user)
+    visible_issues = visible_issues_for(request.user)
+    status_summary = [
+        {"label": label, "count": visible_issues.filter(status=value).count()}
+        for value, label in Issue.Status.choices
+    ]
+    department_summary = (
+        devices.values("department__name")
+        .annotate(count=Count("id"))
+        .order_by("department__name")
+    )
+    unit_summary = (
+        devices.values("department__name", "unit__name")
+        .annotate(count=Count("id"))
+        .order_by("department__name", "unit__name")
+    )
+    device_type_summary = (
+        devices.values("device_type__name")
+        .annotate(count=Count("id"))
+        .order_by("device_type__name")
+    )
+    device_status_summary = [
+        {"label": label, "count": devices.filter(status=value).count()}
+        for value, label in Device.Status.choices
+    ]
+    active_assignment_devices = AssignmentHistory.objects.filter(
+        ended_at__isnull=True, device__in=devices
+    ).values("device_id")
+    assignment_summary = [
+        {"label": "Atanmış", "count": devices.filter(pk__in=active_assignment_devices).distinct().count()},
+        {"label": "Atanmamış", "count": devices.exclude(pk__in=active_assignment_devices).count()},
+    ]
+    component_summary = (
+        DeviceComponent.objects.filter(device__in=devices, removed_at__isnull=True)
+        .values("component_type__name")
+        .annotate(count=Count("id"))
+        .order_by("component_type__name")
+    )
+    can_view_internal_history = user_is_it(request.user)
+    expired_warranties = []
+    upcoming_warranties = []
+    if can_view_internal_history:
+        today = timezone.localdate()
+        warranty_records = InvoiceInfo.objects.filter(
+            device__in=devices, warranty_until__isnull=False
+        ).select_related("device")
+        expired_warranties = warranty_records.filter(
+            warranty_until__lt=today
+        ).order_by("warranty_until")[:10]
+        upcoming_warranties = warranty_records.filter(
+            warranty_until__gte=today,
+            warranty_until__lte=today + timedelta(days=30),
+        ).order_by("warranty_until")[:10]
+    return render(
+        request,
+        "inventory/reports.html",
+        {
+            "device_count": devices.count(),
+            "active_device_count": devices.filter(is_active=True).count(),
+            "repair_count": devices.filter(status=Device.Status.REPAIR).count(),
+            "open_issue_count": visible_issues.exclude(status__in=[Issue.Status.RESOLVED, Issue.Status.CLOSED]).count(),
+            "status_summary": status_summary,
+            "department_summary": department_summary,
+            "unit_summary": unit_summary,
+            "device_type_summary": device_type_summary,
+            "device_status_summary": device_status_summary,
+            "assignment_summary": assignment_summary,
+            "component_summary": component_summary,
+            "can_view_internal_history": can_view_internal_history,
+            "expired_warranties": expired_warranties,
+            "upcoming_warranties": upcoming_warranties,
+        },
+    )
+
+
+def csv_response(filename):
+    response = HttpResponse(content_type="text/csv; charset=utf-8")
+    response["Content-Disposition"] = f'attachment; filename="{filename}"'
+    response.write("\ufeff")
+    return response
+
+
+def safe_csv_value(value):
+    value = "" if value is None else str(value)
+    if value.startswith(("=", "+", "-", "@", "\t", "\r")):
+        return "'" + value
+    return value
+
+
+@login_required
+def export_devices_csv(request):
+    require_it_access(request)
+    active_assignments = AssignmentHistory.objects.filter(ended_at__isnull=True).select_related("user")
+    devices = (
+        scoped_devices_for(request.user)
+        .prefetch_related(Prefetch("assignments", queryset=active_assignments, to_attr="active_assignments"))
+        .annotate(component_count=Count("components", filter=Q(components__removed_at__isnull=True)))
+        .order_by("asset_tag")
+    )
+    response = csv_response(f"cihaz-raporu-{timezone.localdate():%Y-%m-%d}.csv")
+    writer = csv.writer(response)
+    writer.writerow([
+        "Demirbaş numarası", "Cihaz türü", "Marka", "Model", "Seri numarası", "IP adresi",
+        "MAC adresi", "Departman", "Birim", "Atanan kullanıcı", "Durum", "Aktif", "Takılı bileşen sayısı",
+    ])
+    for device in devices:
+        assignment = device.active_assignments[0] if device.active_assignments else None
+        row = [
+            device.asset_tag, device.device_type.name, device.brand, device.model_name, device.serial_number,
+            device.ip_address, device.mac_address, device.department.name,
+            device.unit.name if device.unit_id else "", assignment.user if assignment else "",
+            device.get_status_display(), "Evet" if device.is_active else "Hayır", device.component_count,
+        ]
+        writer.writerow([safe_csv_value(value) for value in row])
+    return response
+
+
+@login_required
+def export_issues_csv(request):
+    require_it_access(request)
+    issues = visible_issues_for(request.user).select_related(
+        "device", "reported_by", "assigned_to"
+    )
+    response = csv_response(f"ariza-raporu-{timezone.localdate():%Y-%m-%d}.csv")
+    writer = csv.writer(response)
+    writer.writerow([
+        "Konu", "Cihaz", "Bildiren", "Atanan IT sorumlusu", "Durum", "Öncelik", "Oluşturulma tarihi", "Tamamlanma tarihi",
+    ])
+    for issue in issues.order_by("-created_at"):
+        row = [
+            issue.title, issue.device.asset_tag, issue.reported_by,
+            issue.assigned_to or "", issue.get_status_display(), issue.get_priority_display(),
+            timezone.localtime(issue.created_at).strftime("%d.%m.%Y %H:%M"),
+            timezone.localtime(issue.resolved_at).strftime("%d.%m.%Y %H:%M") if issue.resolved_at else "",
+        ]
+        writer.writerow([safe_csv_value(value) for value in row])
+    return response
+
+
+@login_required
+def issue_list(request):
+    issues = visible_issues_for(request.user).select_related(
+        "device", "reported_by", "assigned_to"
+    )
+    query = request.GET.get("q", "").strip()
+    status = request.GET.get("status", "").strip()
+    priority = request.GET.get("priority", "").strip()
+    if query:
+        query_filter = (
+            Q(title__icontains=query)
+            | Q(description__icontains=query)
+            | Q(device__asset_tag__icontains=query)
+        )
+        if user_is_it(request.user):
+            query_filter |= (
+                Q(reported_by__username__icontains=query)
+                | Q(reported_by__first_name__icontains=query)
+                | Q(reported_by__last_name__icontains=query)
+                | Q(assigned_to__username__icontains=query)
+            )
+        issues = issues.filter(query_filter)
+    if status in dict(Issue.Status.choices):
+        issues = issues.filter(status=status)
+    else:
+        status = ""
+    if priority in dict(Issue.Priority.choices):
+        issues = issues.filter(priority=priority)
+    else:
+        priority = ""
+
+    paginator = Paginator(issues.order_by("-created_at"), 25)
+    page_obj = paginator.get_page(request.GET.get("page"))
+    return render(
+        request,
+        "support/issue_list.html",
+        {
+            "issues": page_obj.object_list,
+            "page_obj": page_obj,
+            "query": query,
+            "selected_status": status,
+            "selected_priority": priority,
+            "status_choices": Issue.Status.choices,
+            "priority_choices": Issue.Priority.choices,
+            "can_manage": user_is_it(request.user),
+        },
+    )
+
+
+@login_required
+def issue_create(request):
+    from .forms import IssueCreateForm
+    from support.models import IssueUpdate
+
+    if request.method == "POST":
+        form = IssueCreateForm(request.POST, devices=scoped_devices_for(request.user))
+        if form.is_valid():
+            issue = form.save(commit=False)
+            issue.reported_by = request.user
+            issue.save()
+            IssueUpdate.objects.create(
+                issue=issue,
+                author=request.user,
+                message=f"Durum: {dict(Issue.Status.choices)[issue.status]}",
+                new_status=issue.status,
+            )
+            return redirect("inventory:issue_detail", issue_id=issue.pk)
+    else:
+        form = IssueCreateForm(
+            devices=scoped_devices_for(request.user),
+            initial={"device": request.GET.get("device")},
+        )
+    return render(request, "support/issue_form.html", {"form": form})
+
+
+@login_required
+@transaction.atomic
+def issue_detail(request, issue_id):
+    from .forms import IssueManagementForm
+
+    visible_issues = visible_issues_for(request.user)
+    issue = get_object_or_404(
+        visible_issues.select_related("device", "reported_by", "assigned_to"), pk=issue_id
+    )
+    can_manage = user_is_it(request.user)
+    transitions = {
+        Issue.Status.IN_PROGRESS: (Issue.Status.WAITING, Issue.Status.RESOLVED),
+        Issue.Status.WAITING: (Issue.Status.IN_PROGRESS, Issue.Status.RESOLVED),
+    }
+    transition_error = ""
+    transition_note = ""
+    if request.method == "POST" and request.POST.get("action") == "quick_start" and can_manage:
+        if issue.status == Issue.Status.NEW and issue.assigned_to_id in (None, request.user.pk):
+            old_status = issue.status
+            issue.status = Issue.Status.IN_PROGRESS
+            issue.assigned_to = request.user
+            issue.save(update_fields=["status", "assigned_to", "updated_at"])
+            IssueUpdate.objects.create(
+                issue=issue,
+                author=request.user,
+                message=f"{request.user.get_full_name() or request.user.username} bildirimi üstlendi ve işe başladı.",
+                old_status=old_status,
+                new_status=issue.status,
+            )
+        return redirect("inventory:issue_detail", issue_id=issue.pk)
+
+    if request.method == "POST" and request.POST.get("action") == "transition" and can_manage:
+        next_status = request.POST.get("next_status")
+        if next_status in transitions.get(issue.status, ()):
+            note = request.POST.get("update_note", "").strip()[:500]
+            transition_note = note
+            if next_status == Issue.Status.WAITING and not note:
+                transition_error = "Beklemeye almadan önce kullanıcıdan beklenen bilgi veya işlemi yaz."
+            else:
+                old_status = issue.status
+                issue.status = next_status
+                if next_status == Issue.Status.RESOLVED:
+                    issue.resolved_at = issue.resolved_at or timezone.now()
+                else:
+                    issue.resolved_at = None
+                issue.save(update_fields=["status", "resolved_at", "updated_at"])
+                labels = dict(Issue.Status.choices)
+                message = f"Durum: {labels[old_status]} → {labels[next_status]}"
+                if note:
+                    message = f"{message}. {note}"
+                IssueUpdate.objects.create(
+                    issue=issue,
+                    author=request.user,
+                    message=message,
+                    old_status=old_status,
+                    new_status=next_status,
+                )
+                return redirect("inventory:issue_detail", issue_id=issue.pk)
+
+    if request.method == "POST" and request.POST.get("action") == "reporter_confirmation":
+        choice = request.POST.get("confirmation")
+        if issue.reported_by_id == request.user.pk and issue.status in {Issue.Status.RESOLVED, Issue.Status.CLOSED}:
+            old_status = issue.status
+            if choice == "fixed" and issue.status == Issue.Status.RESOLVED:
+                issue.status = Issue.Status.CLOSED
+                message = "Bildiren kullanıcı çözümü onayladı ve kaydı kapattı."
+            elif choice == "not_fixed" and issue.status == Issue.Status.RESOLVED:
+                issue.status = Issue.Status.IN_PROGRESS
+                issue.resolved_at = None
+                message = "Bildiren kullanıcı sorunun devam ettiğini bildirdi; kayıt yeniden açıldı."
+            elif choice == "reopen" and issue.status == Issue.Status.CLOSED:
+                issue.status = Issue.Status.IN_PROGRESS
+                issue.resolved_at = None
+                message = "Bildiren kullanıcı sorunun tekrar ettiğini bildirdi; kayıt yeniden açıldı."
+            else:
+                return redirect("inventory:issue_detail", issue_id=issue.pk)
+            issue.save(update_fields=["status", "resolved_at", "updated_at"])
+            IssueUpdate.objects.create(
+                issue=issue,
+                author=request.user,
+                message=message,
+                old_status=old_status,
+                new_status=issue.status,
+            )
+            return redirect("inventory:issue_detail", issue_id=issue.pk)
+
+    if request.method == "POST" and request.POST.get("action") == "manage" and can_manage:
+        management_form = IssueManagementForm(
+            request.POST, actor=request.user, device=issue.device
+        )
+        if management_form.is_valid():
+            old_priority = issue.priority
+            old_assigned_to_id = issue.assigned_to_id
+            issue.priority = management_form.cleaned_data["priority"]
+            issue.assigned_to = management_form.cleaned_data["assigned_to"]
+            issue.save()
+            if old_priority != issue.priority or old_assigned_to_id != issue.assigned_to_id:
+                changes = []
+                if old_priority != issue.priority:
+                    changes.append(f"Öncelik: {issue.get_priority_display()}")
+                if old_assigned_to_id != issue.assigned_to_id:
+                    changes.append(f"Sorumlu: {issue.assigned_to or 'Atanmadı'}")
+                IssueUpdate.objects.create(
+                    issue=issue,
+                    author=request.user,
+                    message=" · ".join(changes),
+                )
+            return redirect("inventory:issue_detail", issue_id=issue.pk)
+    else:
+        management_form = None
+    if can_manage and management_form is None:
+        management_form = IssueManagementForm(
+            actor=request.user,
+            device=issue.device,
+            initial={
+                "priority": issue.priority,
+                "assigned_to": issue.assigned_to_id,
+            }
+        )
+    updates = issue.updates.select_related("author").filter(
+        Q(old_status__gt="") | Q(new_status__gt="")
+    ).order_by("created_at")
+    status_labels = dict(Issue.Status.choices)
+    for update in updates:
+        update.old_status_label = status_labels.get(update.old_status, update.old_status)
+        update.new_status_label = status_labels.get(update.new_status, update.new_status)
+        if update.old_status:
+            generic_message = f"Durum: {update.old_status_label} → {update.new_status_label}"
+        else:
+            generic_message = f"Durum: {update.new_status_label}"
+        update.activity_note = update.message
+        if update.activity_note == generic_message:
+            update.activity_note = ""
+        elif update.activity_note.startswith(f"{generic_message}. "):
+            update.activity_note = update.activity_note[len(generic_message) + 2:]
+    return render(
+        request,
+        "support/issue_detail.html",
+        {
+            "issue": issue,
+            "transition_error": transition_error,
+            "transition_note": transition_note,
+            "updates": updates,
+            "management_form": management_form if can_manage else None,
+            "can_manage": can_manage,
+            "available_transitions": [
+                (status, dict(Issue.Status.choices)[status])
+                for status in transitions.get(issue.status, ())
+            ] if can_manage else [],
+            "can_quick_start": (
+                can_manage
+                and issue.status == Issue.Status.NEW
+                and issue.assigned_to_id in (None, request.user.pk)
+            ),
+            "can_confirm_resolution": (
+                not can_manage
+                and issue.reported_by_id == request.user.pk
+                and issue.status in {Issue.Status.RESOLVED, Issue.Status.CLOSED}
+            ),
+            "workflow_steps": (
+                (Issue.Status.NEW, dict(Issue.Status.choices)[Issue.Status.NEW]),
+                (Issue.Status.IN_PROGRESS, dict(Issue.Status.choices)[Issue.Status.IN_PROGRESS]),
+                (Issue.Status.WAITING, dict(Issue.Status.choices)[Issue.Status.WAITING]),
+                (Issue.Status.RESOLVED, dict(Issue.Status.choices)[Issue.Status.RESOLVED]),
+                (Issue.Status.CLOSED, dict(Issue.Status.choices)[Issue.Status.CLOSED]),
+            ),
+            "workflow_current_step": {
+                Issue.Status.NEW: 0,
+                Issue.Status.IN_PROGRESS: 1,
+                Issue.Status.WAITING: 2,
+                Issue.Status.RESOLVED: 3,
+                Issue.Status.CLOSED: 4,
+            }.get(issue.status, 0),
+            "status_guidance": {
+                Issue.Status.NEW: (
+                    "Bildirim IT ekibine iletildi. Bir sorumlu işe başladığında durum burada güncellenecek."
+                    if not can_manage else
+                    "Bildirim sırada. Üstlenip işe başlayabilir veya doğru IT sorumlusuna atayabilirsin."
+                ),
+                Issue.Status.IN_PROGRESS: (
+                    "IT ekibi sorunu inceliyor. Yeni bir bilgi gerekirse aşağıdaki durum geçmişinde not bırakılır."
+                    if not can_manage else
+                    "İnceleme sürüyor. Çözüm için beklemeye alabilir veya sorun giderildiyse çözüldü olarak işaretleyebilirsin."
+                ),
+                Issue.Status.WAITING: (
+                    "Bu kayıtta senden bilgi veya işlem bekleniyor. İstenen adım, durum geçmişindeki son notta yazıyor."
+                    if not can_manage else
+                    "Kullanıcıdan beklenen bilgi veya işlemi durum notunda açıkça belirt. Yanıt geldiğinde çalışmaya devam edebilirsin."
+                ),
+                Issue.Status.RESOLVED: (
+                    "Çözümünü kontrol et. Sorun giderildiyse onayla; devam ediyorsa yeniden aç."
+                    if not can_manage else
+                    "Çözüm kullanıcı onayını bekliyor. Kullanıcı onayladığında kayıt kapanır; sorun sürüyorsa yeniden açılır."
+                ),
+                Issue.Status.CLOSED: (
+                    "Bu bildirim kapatıldı. Sorun tekrar ederse kaydı yeniden açabilirsin."
+                    if not can_manage else
+                    "Bildirim kapalı. Kullanıcı sorun tekrar ettiğini bildirirse kayıt yeniden açılabilir."
+                ),
+            }.get(issue.status, ""),
+        },
+    )

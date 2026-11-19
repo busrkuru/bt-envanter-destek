@@ -1,0 +1,37 @@
+{% extends "base.html" %}
+{% block title %}{% if request.user.role == 'unit_user' %}Cihazlarım{% else %}Cihazlar{% endif %} | BT Envanter ve Destek{% endblock %}
+{% block content %}
+<h1>{% if request.user.role == "unit_user" %}Cihazlarım{% else %}Cihazlar{% endif %}</h1>
+<p class="sub">{% if request.user.role == "unit_user" %}Sana zimmetli bilgisayar ve diğer cihazları burada görebilirsin.{% else %}Yetki kapsamındaki cihazları ara ve ayrıntılarını görüntüle.{% endif %}</p>
+
+<section class="panel">
+  <form class="search" method="get" role="search">
+    <label class="visually-hidden" for="device-search">Cihazlarda ara</label>
+    <input id="device-search" type="search" name="q" value="{{ query }}" placeholder="Demirbaş no, kullanıcı, IP, MAC, seri no, marka veya model">
+    <button class="button" type="submit">Ara</button>
+    {% if query %}<a class="button secondary-button" href="{% url 'inventory:device_list' %}">Aramayı temizle</a>{% endif %}
+  </form>
+  {% if query %}<p class="table-caption">“{{ query }}” araması</p>{% endif %}
+  <div class="table-wrap"><table class="device-table">
+    <thead><tr>
+      <th scope="col">Demirbaş no</th><th scope="col">Cihaz</th>
+      {% if request.user.role != "unit_user" %}<th scope="col">Departman / birim</th><th scope="col">Atanan kullanıcı</th><th scope="col">IP adresi</th>{% endif %}
+      <th scope="col">Durum</th>
+    </tr></thead>
+    <tbody>
+      {% for device in devices %}
+      <tr>
+        <td><a href="{% url 'inventory:device_detail' device_id=device.pk %}">{{ device.asset_tag }}</a></td>
+        <td>{{ device.device_type }}{% if device.brand or device.model_name %}<br>{{ device.brand }} {{ device.model_name }}{% endif %}{% if device.serial_number %}<br><small>Seri no: {{ device.serial_number }}</small>{% endif %}</td>
+        {% if request.user.role != "unit_user" %}<td>{{ device.department }}{% if device.unit %}<br>{{ device.unit.name }}{% endif %}</td><td>{{ device.current_holder|default:"Atanmamış" }}</td><td>{{ device.ip_address|default:"—" }}</td>{% endif %}
+        <td><span class="pill">{{ device.get_status_display }}</span></td>
+      </tr>
+      {% empty %}
+      <tr><td colspan="{% if request.user.role == 'unit_user' %}3{% else %}6{% endif %}" class="empty">
+        {% if query %}“{{ query }}” ile eşleşen cihaz bulunamadı.{% elif request.user.role == "unit_user" %}Hesabına zimmetli cihaz bulunmuyor. Cihaz atanması için IT sorumlusuna başvurabilirsin.{% else %}Henüz cihaz kaydı bulunmuyor.{% endif %}
+      </td></tr>
+      {% endfor %}
+    </tbody>
+  </table></div>
+</section>
+{% endblock %}
