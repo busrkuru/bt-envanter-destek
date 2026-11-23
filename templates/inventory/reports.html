@@ -15,7 +15,7 @@
 <section class="cards" aria-label="Envanter özeti">
   <a class="card card-link" href="{% url 'inventory:device_list' %}"><span>Toplam cihaz</span><strong>{{ device_count }}</strong></a>
   <a class="card card-link" href="{% url 'inventory:device_list' %}"><span>Kullanımdaki cihazlar</span><strong>{{ active_device_count }}</strong></a>
-  <a class="card card-link" href="{% url 'inventory:device_list' %}"><span>Onarımdaki cihazlar</span><strong>{{ repair_count }}</strong></a>
+  <a class="card card-link" href="{% url 'inventory:device_list' %}?status=repair"><span>Onarımdaki cihazlar</span><strong>{{ repair_count }}</strong></a>
   <a class="card card-link" href="{% url 'inventory:issue_list' %}"><span>Açık arıza bildirimleri</span><strong>{{ open_issue_count }}</strong></a>
 </section>
 <p class="table-caption">CSV dosyaları yalnızca görüntüleme yetkin olan kayıtları içerir.</p>

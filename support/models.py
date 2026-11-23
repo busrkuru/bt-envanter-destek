@@ -2,6 +2,7 @@ from django.conf import settings
 from django.db import models
 
 from inventory.models import Device
+from organization.models import Unit
 
 
 class Issue(models.Model):
@@ -22,6 +23,14 @@ class Issue(models.Model):
     reported_by = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.PROTECT, related_name="reported_issues", verbose_name="Bildiren kullanıcı")
     assigned_to = models.ForeignKey(
         settings.AUTH_USER_MODEL, on_delete=models.PROTECT, null=True, blank=True, related_name="assigned_issues", verbose_name="Atanan IT sorumlusu"
+    )
+    assigned_unit = models.ForeignKey(
+        Unit,
+        on_delete=models.PROTECT,
+        null=True,
+        blank=True,
+        related_name="assigned_issues",
+        verbose_name="Yönlendirilen ekip",
     )
     title = models.CharField(max_length=160, verbose_name="Başlık")
     description = models.TextField(verbose_name="Açıklama")
@@ -47,6 +56,7 @@ class IssueUpdate(models.Model):
     message = models.TextField(verbose_name="Güncelleme")
     old_status = models.CharField(max_length=20, blank=True, verbose_name="Önceki durum")
     new_status = models.CharField(max_length=20, blank=True, verbose_name="Yeni durum")
+    is_internal = models.BooleanField(default=False, verbose_name="Yalnızca IT ekibine görünür")
     created_at = models.DateTimeField(auto_now_add=True, verbose_name="Oluşturulma tarihi")
 
     class Meta:

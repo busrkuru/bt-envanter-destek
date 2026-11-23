@@ -1,17 +1,18 @@
 {% extends "base.html" %}
-{% block title %}{% if request.user.role == 'unit_user' %}Cihazlarım{% else %}Cihazlar{% endif %} | BT Envanter ve Destek{% endblock %}
+{% block title %}{% if selected_status == 'repair' %}Onarımdaki cihazlar{% elif request.user.role == 'unit_user' %}Cihazlarım{% else %}Cihazlar{% endif %} | BT Envanter ve Destek{% endblock %}
 {% block content %}
-<h1>{% if request.user.role == "unit_user" %}Cihazlarım{% else %}Cihazlar{% endif %}</h1>
-<p class="sub">{% if request.user.role == "unit_user" %}Sana zimmetli bilgisayar ve diğer cihazları burada görebilirsin.{% else %}Yetki kapsamındaki cihazları ara ve ayrıntılarını görüntüle.{% endif %}</p>
+<h1>{% if selected_status == "repair" %}Onarımdaki cihazlar{% elif request.user.role == "unit_user" %}Cihazlarım{% else %}Cihazlar{% endif %}</h1>
+<p class="sub">{% if selected_status == "repair" %}Yetki kapsamındaki onarım durumundaki cihazlar.{% elif request.user.role == "unit_user" %}Sana zimmetli bilgisayar ve diğer cihazları burada görebilirsin.{% else %}Yetki kapsamındaki cihazları ara ve ayrıntılarını görüntüle.{% endif %}</p>
 
 <section class="panel">
   <form class="search" method="get" role="search">
     <label class="visually-hidden" for="device-search">Cihazlarda ara</label>
     <input id="device-search" type="search" name="q" value="{{ query }}" placeholder="Demirbaş no, kullanıcı, IP, MAC, seri no, marka veya model">
     <button class="button" type="submit">Ara</button>
-    {% if query %}<a class="button secondary-button" href="{% url 'inventory:device_list' %}">Aramayı temizle</a>{% endif %}
+    {% if query or selected_status %}<a class="button secondary-button" href="{% url 'inventory:device_list' %}">Filtreleri temizle</a>{% endif %}
   </form>
   {% if query %}<p class="table-caption">“{{ query }}” araması</p>{% endif %}
+  {% if selected_status_label %}<p class="table-caption">Durum: {{ selected_status_label }}</p>{% endif %}
   <div class="table-wrap"><table class="device-table">
     <thead><tr>
       <th scope="col">Demirbaş no</th><th scope="col">Cihaz</th>
@@ -28,7 +29,7 @@
       </tr>
       {% empty %}
       <tr><td colspan="{% if request.user.role == 'unit_user' %}3{% else %}6{% endif %}" class="empty">
-        {% if query %}“{{ query }}” ile eşleşen cihaz bulunamadı.{% elif request.user.role == "unit_user" %}Hesabına zimmetli cihaz bulunmuyor. Cihaz atanması için IT sorumlusuna başvurabilirsin.{% else %}Henüz cihaz kaydı bulunmuyor.{% endif %}
+        {% if query %}“{{ query }}” ile eşleşen cihaz bulunamadı.{% elif selected_status == "repair" %}Yetki kapsamındaki onarım durumunda cihaz bulunmuyor.{% elif request.user.role == "unit_user" %}Hesabına zimmetli cihaz bulunmuyor. Cihaz atanması için IT sorumlusuna başvurabilirsin.{% else %}Henüz cihaz kaydı bulunmuyor.{% endif %}
       </td></tr>
       {% endfor %}
     </tbody>

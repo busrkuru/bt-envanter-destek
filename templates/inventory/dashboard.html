@@ -15,7 +15,7 @@
 <section class="cards" aria-label="Özet bilgiler">
   <a class="card card-link" href="{% url 'inventory:device_list' %}"><span>{% if request.user.role == "unit_user" %}Atanmış cihazlar{% else %}Yetki kapsamındaki cihazlar{% endif %}</span><strong>{{ device_count }}</strong></a>
   <a class="card card-link" href="{% url 'inventory:device_list' %}"><span>Kullanımdaki cihazlar</span><strong>{{ active_device_count }}</strong></a>
-  <a class="card card-link" href="{% url 'inventory:device_list' %}"><span>Onarımdaki cihazlar</span><strong>{{ repair_count }}</strong></a>
+  <a class="card card-link" href="{% url 'inventory:device_list' %}?status=repair"><span>Onarımdaki cihazlar</span><strong>{{ repair_count }}</strong></a>
   <a class="card card-link" href="{% url 'inventory:issue_list' %}"><span>Açık arıza bildirimleri</span><strong>{{ open_issue_count }}</strong></a>
 </section>
 
@@ -34,12 +34,12 @@
     <h2>{% if request.user.role == "unit_user" %}Arıza bildirimlerim{% else %}Son arıza bildirimleri{% endif %}</h2>
     {% if recent_issues %}
       <div class="table-wrap"><table>
-        <thead><tr><th scope="col">Konu</th><th scope="col">Cihaz</th>{% if request.user.role != "unit_user" %}<th scope="col">Bildiren</th><th scope="col">Atanan IT sorumlusu</th>{% endif %}<th scope="col">Durum</th><th scope="col">Öncelik</th></tr></thead>
+        <thead><tr><th scope="col">Konu</th><th scope="col">Cihaz</th>{% if request.user.role != "unit_user" %}<th scope="col">Bildiren</th><th scope="col">Ekip</th><th scope="col">Atanan IT sorumlusu</th>{% endif %}<th scope="col">Durum</th><th scope="col">Öncelik</th></tr></thead>
         <tbody>{% for issue in recent_issues %}
           <tr>
             <td><a href="{% url 'inventory:issue_detail' issue_id=issue.pk %}">{{ issue.title }}</a></td>
             <td>{{ issue.device.asset_tag }}</td>
-            {% if request.user.role != "unit_user" %}<td>{{ issue.reported_by }}</td><td>{{ issue.assigned_to|default:"Atanmadı" }}</td>{% endif %}
+            {% if request.user.role != "unit_user" %}<td>{{ issue.reported_by }}</td><td>{% if issue.assigned_unit %}{{ issue.assigned_unit.department.name }} · {{ issue.assigned_unit.name }}{% else %}Atanmadı{% endif %}</td><td>{{ issue.assigned_to|default:"Ekip kuyruğunda" }}</td>{% endif %}
             <td><span class="pill">{{ issue.get_status_display }}</span></td>
             <td>{{ issue.get_priority_display }}</td>
           </tr>

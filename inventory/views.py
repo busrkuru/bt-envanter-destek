@@ -11,7 +11,14 @@ from django.http import HttpResponse
 from django.shortcuts import get_object_or_404, redirect, render
 from django.utils import timezone
 
-from organization.access import is_it_manager, is_primary_admin, scoped_devices
+from organization.access import (
+    is_it_manager,
+    is_primary_admin,
+    it_units_for,
+    scoped_devices,
+    visible_issues_for as issues_visible_to,
+)
+from organization.models import Unit
 from support.models import Issue, IssueUpdate
 
 from .models import AssignmentHistory, Device, DeviceComponent, InvoiceInfo
@@ -23,10 +30,7 @@ def scoped_devices_for(user):
 
 
 def visible_issues_for(user):
-    """IT sees scoped issues; unit users retain their own issue history."""
-    if user_is_it(user):
-        return Issue.objects.filter(device__in=scoped_devices_for(user))
-    return Issue.objects.filter(reported_by=user)
+    return issues_visible_to(user)
 
 
 def user_is_it(user):
@@ -48,7 +52,9 @@ def dashboard(request):
         "active_device_count": devices.filter(is_active=True).count(),
         "open_issue_count": visible_issues.exclude(status__in=[Issue.Status.RESOLVED, Issue.Status.CLOSED]).count(),
         "repair_count": devices.filter(status=Device.Status.REPAIR).count(),
-        "recent_issues": visible_issues.select_related("device", "reported_by").order_by("-created_at")[:5],
+        "recent_issues": visible_issues.select_related(
+            "device", "reported_by", "assigned_unit", "assigned_to"
+        ).order_by("-created_at")[:5],
     }
     return render(request, "inventory/dashboard.html", context)
 
@@ -56,12 +62,17 @@ def dashboard(request):
 @login_required
 def device_list(request):
     query = request.GET.get("q", "").strip()
+    status = request.GET.get("status", "").strip()
     active_assignments = AssignmentHistory.objects.filter(
         ended_at__isnull=True
     ).select_related("user")
     devices = scoped_devices_for(request.user).prefetch_related(
         Prefetch("assignments", queryset=active_assignments, to_attr="active_assignments")
     )
+    if status in dict(Device.Status.choices):
+        devices = devices.filter(status=status)
+    else:
+        status = ""
     if query:
         devices = devices.annotate(
             component_specs_text=Cast("components__specifications", output_field=CharField())
@@ -92,7 +103,16 @@ def device_list(request):
     for device in devices:
         assignment = device.active_assignments[0] if device.active_assignments else None
         device.current_holder = assignment.user if assignment else None
-    return render(request, "inventory/device_list.html", {"devices": devices, "query": query})
+    return render(
+        request,
+        "inventory/device_list.html",
+        {
+            "devices": devices,
+            "query": query,
+            "selected_status": status,
+            "selected_status_label": dict(Device.Status.choices).get(status, ""),
+        },
+    )
 
 
 @login_required
@@ -267,16 +287,16 @@ def export_devices_csv(request):
 def export_issues_csv(request):
     require_it_access(request)
     issues = visible_issues_for(request.user).select_related(
-        "device", "reported_by", "assigned_to"
+        "device", "reported_by", "assigned_to", "assigned_unit"
     )
     response = csv_response(f"ariza-raporu-{timezone.localdate():%Y-%m-%d}.csv")
     writer = csv.writer(response)
     writer.writerow([
-        "Konu", "Cihaz", "Bildiren", "Atanan IT sorumlusu", "Durum", "Öncelik", "Oluşturulma tarihi", "Tamamlanma tarihi",
+        "Konu", "Cihaz", "Destek ekibi", "Bildiren", "Atanan IT sorumlusu", "Durum", "Öncelik", "Oluşturulma tarihi", "Tamamlanma tarihi",
     ])
     for issue in issues.order_by("-created_at"):
         row = [
-            issue.title, issue.device.asset_tag, issue.reported_by,
+            issue.title, issue.device.asset_tag, issue.assigned_unit or "", issue.reported_by,
             issue.assigned_to or "", issue.get_status_display(), issue.get_priority_display(),
             timezone.localtime(issue.created_at).strftime("%d.%m.%Y %H:%M"),
             timezone.localtime(issue.resolved_at).strftime("%d.%m.%Y %H:%M") if issue.resolved_at else "",
@@ -288,16 +308,27 @@ def export_issues_csv(request):
 @login_required
 def issue_list(request):
     issues = visible_issues_for(request.user).select_related(
-        "device", "reported_by", "assigned_to"
+        "device", "reported_by", "assigned_to", "assigned_unit"
     )
     query = request.GET.get("q", "").strip()
     status = request.GET.get("status", "").strip()
     priority = request.GET.get("priority", "").strip()
+    team_id = request.GET.get("team", "").strip()
+    team_choices = it_units_for(request.user) if user_is_it(request.user) else Unit.objects.none()
+    if team_id and user_is_it(request.user):
+        selected_team = team_choices.filter(pk=team_id).first()
+        if selected_team:
+            issues = issues.filter(assigned_unit=selected_team)
+        else:
+            team_id = ""
+    else:
+        team_id = ""
     if query:
         query_filter = (
             Q(title__icontains=query)
             | Q(description__icontains=query)
             | Q(device__asset_tag__icontains=query)
+            | Q(assigned_unit__name__icontains=query)
         )
         if user_is_it(request.user):
             query_filter |= (
@@ -327,6 +358,9 @@ def issue_list(request):
             "query": query,
             "selected_status": status,
             "selected_priority": priority,
+            "selected_team": team_id,
+            "selected_team_id": int(team_id) if team_id else None,
+            "team_choices": team_choices,
             "status_choices": Issue.Status.choices,
             "priority_choices": Issue.Priority.choices,
             "can_manage": user_is_it(request.user),
@@ -344,6 +378,7 @@ def issue_create(request):
         if form.is_valid():
             issue = form.save(commit=False)
             issue.reported_by = request.user
+            issue.assigned_unit = issue.device.unit
             issue.save()
             IssueUpdate.objects.create(
                 issue=issue,
@@ -367,7 +402,7 @@ def issue_detail(request, issue_id):
 
     visible_issues = visible_issues_for(request.user)
     issue = get_object_or_404(
-        visible_issues.select_related("device", "reported_by", "assigned_to"), pk=issue_id
+        visible_issues.select_related("device", "reported_by", "assigned_to", "assigned_unit"), pk=issue_id
     )
     can_manage = user_is_it(request.user)
     transitions = {
@@ -453,15 +488,31 @@ def issue_detail(request, issue_id):
         if management_form.is_valid():
             old_priority = issue.priority
             old_assigned_to_id = issue.assigned_to_id
+            old_assigned_unit_id = issue.assigned_unit_id
+            old_assignee = issue.assigned_to
+            old_team = issue.assigned_unit
             issue.priority = management_form.cleaned_data["priority"]
+            issue.assigned_unit = management_form.cleaned_data["assigned_unit"]
             issue.assigned_to = management_form.cleaned_data["assigned_to"]
             issue.save()
-            if old_priority != issue.priority or old_assigned_to_id != issue.assigned_to_id:
+            if (
+                old_priority != issue.priority
+                or old_assigned_to_id != issue.assigned_to_id
+                or old_assigned_unit_id != issue.assigned_unit_id
+            ):
                 changes = []
+                if old_assigned_unit_id != issue.assigned_unit_id:
+                    changes.append(
+                        f"Ekip: {old_team.name if old_team else 'Atanmadı'} → "
+                        f"{issue.assigned_unit.name if issue.assigned_unit else 'Atanmadı'}"
+                    )
+                if old_assigned_to_id != issue.assigned_to_id:
+                    changes.append(
+                        f"Sorumlu: {old_assignee or 'Atanmadı'} → "
+                        f"{issue.assigned_to or 'Ekip kuyruğu'}"
+                    )
                 if old_priority != issue.priority:
                     changes.append(f"Öncelik: {issue.get_priority_display()}")
-                if old_assigned_to_id != issue.assigned_to_id:
-                    changes.append(f"Sorumlu: {issue.assigned_to or 'Atanmadı'}")
                 IssueUpdate.objects.create(
                     issue=issue,
                     author=request.user,
@@ -471,19 +522,29 @@ def issue_detail(request, issue_id):
     else:
         management_form = None
     if can_manage and management_form is None:
+        available_team_ids = set(it_units_for(request.user).values_list("pk", flat=True))
+        requested_team_id = request.GET.get("route_unit", "").strip()
+        if "route_unit" in request.GET and not requested_team_id:
+            initial_team_id = None
+        elif requested_team_id and str(requested_team_id).isdigit() and int(requested_team_id) in available_team_ids:
+            initial_team_id = int(requested_team_id)
+        else:
+            initial_team_id = issue.assigned_unit_id or issue.device.unit_id
         management_form = IssueManagementForm(
             actor=request.user,
             device=issue.device,
             initial={
                 "priority": issue.priority,
                 "assigned_to": issue.assigned_to_id,
+                "assigned_unit": initial_team_id if initial_team_id and initial_team_id in available_team_ids else None,
             }
         )
-    updates = issue.updates.select_related("author").filter(
-        Q(old_status__gt="") | Q(new_status__gt="")
-    ).order_by("created_at")
+    updates = issue.updates.select_related("author").order_by("created_at")
+    if not can_manage:
+        updates = updates.filter(Q(old_status__gt="") | Q(new_status__gt=""))
     status_labels = dict(Issue.Status.choices)
     for update in updates:
+        update.is_status_update = bool(update.old_status or update.new_status)
         update.old_status_label = status_labels.get(update.old_status, update.old_status)
         update.new_status_label = status_labels.get(update.new_status, update.new_status)
         if update.old_status:
@@ -505,6 +566,7 @@ def issue_detail(request, issue_id):
             "updates": updates,
             "management_form": management_form if can_manage else None,
             "can_manage": can_manage,
+            "can_view_device": scoped_devices_for(request.user).filter(pk=issue.device_id).exists(),
             "available_transitions": [
                 (status, dict(Issue.Status.choices)[status])
                 for status in transitions.get(issue.status, ())

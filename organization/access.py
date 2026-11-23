@@ -12,25 +12,47 @@ def is_it_manager(user):
     return user.is_authenticated and getattr(user, "role", None) == "it_manager"
 
 
-def it_assignees_for(actor, device=None):
-    """Return active IT managers the actor may assign work to."""
-    User = get_user_model()
-    candidates = User.objects.filter(is_active=True, role="it_manager")
+def it_units_for(actor):
+    """Return active support units the actor may route issues to."""
+    from .models import Unit
+
+    units = Unit.objects.filter(is_active=True)
     if is_primary_admin(actor):
-        return candidates.order_by("username")
+        return units
     if not is_it_manager(actor):
-        return candidates.none()
+        return units.none()
 
     actor_scope = Q(pk__in=[])
     for department_id, unit_id in actor.scopes.values_list("department_id", "unit_id"):
         if unit_id:
-            actor_scope |= Q(scopes__department_id=department_id, scopes__unit_id=unit_id)
-            actor_scope |= Q(scopes__department_id=department_id, scopes__unit__isnull=True)
+            actor_scope |= Q(pk=unit_id)
         else:
-            actor_scope |= Q(scopes__department_id=department_id)
-    candidates = candidates.filter(actor_scope)
+            actor_scope |= Q(department_id=department_id)
+    return units.filter(actor_scope).distinct()
 
-    if device is not None:
+
+def it_assignees_for(actor, device=None, unit=None):
+    """Return active IT managers the actor may assign within a team or device scope."""
+    User = get_user_model()
+    candidates = User.objects.filter(is_active=True, role="it_manager")
+    if not is_primary_admin(actor) and not is_it_manager(actor):
+        return candidates.none()
+
+    if is_it_manager(actor):
+        actor_scope = Q(pk__in=[])
+        for department_id, unit_id in actor.scopes.values_list("department_id", "unit_id"):
+            if unit_id:
+                actor_scope |= Q(scopes__department_id=department_id, scopes__unit_id=unit_id)
+                actor_scope |= Q(scopes__department_id=department_id, scopes__unit__isnull=True)
+            else:
+                actor_scope |= Q(scopes__department_id=department_id)
+        candidates = candidates.filter(actor_scope)
+
+    if unit is not None:
+        candidates = candidates.filter(
+            scopes__department_id=unit.department_id,
+        ).filter(Q(scopes__unit_id=unit.pk) | Q(scopes__unit__isnull=True))
+    elif device is not None:
         device_scope = Q(scopes__department_id=device.department_id)
         if device.unit_id:
             device_scope &= Q(scopes__unit_id=device.unit_id) | Q(scopes__unit__isnull=True)
@@ -39,6 +61,22 @@ def it_assignees_for(actor, device=None):
         candidates = candidates.filter(device_scope)
 
     return candidates.distinct().order_by("username")
+
+
+def visible_issues_for(user):
+    """Return issues visible to a reporter, scoped IT worker, or primary admin."""
+    from support.models import Issue
+
+    if is_primary_admin(user):
+        return Issue.objects.all()
+    if is_it_manager(user):
+        team_ids = it_units_for(user).values("pk")
+        return Issue.objects.filter(
+            Q(device__in=scoped_devices(user))
+            | Q(assigned_unit_id__in=team_ids)
+            | Q(assigned_to_id=user.pk)
+        ).distinct()
+    return Issue.objects.filter(reported_by=user)
 
 
 def scope_query(user, prefix=""):

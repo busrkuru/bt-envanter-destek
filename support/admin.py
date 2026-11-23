@@ -1,10 +1,20 @@
 from django.contrib import admin
 from django.utils import timezone
 
-from organization.access import is_it_manager, it_assignees_for, scoped_devices
+from organization.access import (
+    is_it_manager,
+    it_assignees_for,
+    it_units_for,
+    scoped_devices,
+    visible_issues_for,
+)
 from organization.admin_access import RoleScopedAdmin
+from organization.models import Unit
+from django.contrib.auth import get_user_model
 
 from .models import Issue, IssueUpdate
+
+User = get_user_model()
 
 
 @admin.register(IssueUpdate)
@@ -16,7 +26,7 @@ class IssueUpdateAdmin(RoleScopedAdmin):
     readonly_fields = ("issue", "author", "message", "old_status", "new_status", "created_at")
 
     def manager_queryset(self, request, queryset):
-        return queryset.filter(issue__device__in=scoped_devices(request.user))
+        return queryset.filter(issue__in=visible_issues_for(request.user))
 
     def has_add_permission(self, request):
         return False
@@ -42,17 +52,19 @@ class IssueUpdateInline(admin.TabularInline):
 @admin.register(Issue)
 class IssueAdmin(RoleScopedAdmin):
     it_manager_access = True
-    list_display = ("title", "device", "reported_by", "assigned_to", "status", "priority", "created_at")
-    list_filter = ("status", "priority", "created_at")
+    list_display = ("title", "device", "reported_by", "assigned_unit", "assigned_to", "status", "priority", "created_at")
+    list_filter = ("assigned_unit", "status", "priority", "created_at")
     search_fields = ("title", "description", "device__asset_tag", "reported_by__username")
     inlines = (IssueUpdateInline,)
 
     def manager_queryset(self, request, queryset):
-        return queryset.filter(device__in=scoped_devices(request.user))
+        return visible_issues_for(request.user).filter(pk__in=queryset.values("pk"))
 
     def formfield_for_foreignkey(self, db_field, request, **kwargs):
         if db_field.name == "device" and is_it_manager(request.user):
             kwargs["queryset"] = scoped_devices(request.user)
+        elif db_field.name == "assigned_unit":
+            kwargs["queryset"] = it_units_for(request.user)
         elif db_field.name == "assigned_to":
             device = None
             device_id = request.POST.get("device")
@@ -65,13 +77,30 @@ class IssueAdmin(RoleScopedAdmin):
                 if object_id:
                     issue = self.get_object(request, object_id)
                     device = issue.device if issue else None
-            kwargs["queryset"] = it_assignees_for(request.user, device)
+            assigned_unit_id = request.POST.get("assigned_unit")
+            if request.method == "POST" and "assigned_unit" in request.POST and not assigned_unit_id:
+                kwargs["queryset"] = User.objects.none()
+            elif assigned_unit_id:
+                kwargs["queryset"] = it_assignees_for(
+                    request.user,
+                    unit=Unit.objects.filter(pk=assigned_unit_id).first(),
+                )
+            else:
+                issue_unit = getattr(device, "unit", None)
+                kwargs["queryset"] = (
+                    it_assignees_for(request.user, unit=issue_unit)
+                    if issue_unit
+                    else it_assignees_for(request.user, device)
+                )
         return super().formfield_for_foreignkey(db_field, request, **kwargs)
 
     def save_model(self, request, obj, form, change):
         previous = None
         if change:
-            previous = Issue.objects.get(pk=obj.pk)
+            previous = Issue.objects.select_related("assigned_unit", "assigned_to").get(pk=obj.pk)
+
+        if not change and not obj.assigned_unit_id and obj.device_id:
+            obj.assigned_unit = obj.device.unit
 
         if obj.status in {Issue.Status.RESOLVED, Issue.Status.CLOSED}:
             obj.resolved_at = obj.resolved_at or timezone.now()
@@ -98,6 +127,18 @@ class IssueAdmin(RoleScopedAdmin):
                 old_status=previous.status,
                 new_status=obj.status,
             )
+
+        changes = []
+        if previous.assigned_unit_id != obj.assigned_unit_id:
+            old_unit = previous.assigned_unit.name if previous.assigned_unit else "Atanmadı"
+            new_unit = obj.assigned_unit.name if obj.assigned_unit else "Atanmadı"
+            changes.append(f"Ekip: {old_unit} → {new_unit}")
+        if previous.assigned_to_id != obj.assigned_to_id:
+            changes.append(f"Sorumlu: {previous.assigned_to or 'Atanmadı'} → {obj.assigned_to or 'Ekip kuyruğu'}")
+        if previous.priority != obj.priority:
+            changes.append(f"Öncelik: {obj.get_priority_display()}")
+        if changes:
+            IssueUpdate.objects.create(issue=obj, author=request.user, message=" · ".join(changes))
 
     def has_delete_permission(self, request, obj=None):
         return False
