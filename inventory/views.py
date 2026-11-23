@@ -20,6 +20,13 @@ from organization.access import (
 )
 from organization.models import Unit
 from support.models import Issue, IssueUpdate
+from support.models import Notification
+from support.services import (
+    notify_assignment_changed,
+    notify_new_issue,
+    notify_public_activity,
+    notify_shared_users,
+)
 
 from .models import AssignmentHistory, Device, DeviceComponent, InvoiceInfo
 
@@ -386,6 +393,7 @@ def issue_create(request):
                 message=f"Durum: {dict(Issue.Status.choices)[issue.status]}",
                 new_status=issue.status,
             )
+            notify_new_issue(issue, request.user)
             return redirect("inventory:issue_detail", issue_id=issue.pk)
     else:
         form = IssueCreateForm(
@@ -398,19 +406,73 @@ def issue_create(request):
 @login_required
 @transaction.atomic
 def issue_detail(request, issue_id):
-    from .forms import IssueManagementForm
+    from .forms import (
+        IssueInternalNoteForm,
+        IssueManagementForm,
+        IssueParticipantForm,
+        IssuePublicCommentForm,
+    )
+    from support.models import IssueParticipant
 
     visible_issues = visible_issues_for(request.user)
     issue = get_object_or_404(
         visible_issues.select_related("device", "reported_by", "assigned_to", "assigned_unit"), pk=issue_id
     )
     can_manage = user_is_it(request.user)
+    is_reporter = issue.reported_by_id == request.user.pk
+    is_participant = issue.participants.filter(user=request.user).exists()
+    can_share = is_reporter and getattr(request.user, "role", None) == "unit_user"
+    can_comment = can_manage or is_reporter or is_participant
+    internal_note_form = IssueInternalNoteForm() if can_manage else None
+    public_comment_form = IssuePublicCommentForm() if can_comment else None
+    share_form = IssueParticipantForm(issue=issue) if can_share else None
     transitions = {
         Issue.Status.IN_PROGRESS: (Issue.Status.WAITING, Issue.Status.RESOLVED),
         Issue.Status.WAITING: (Issue.Status.IN_PROGRESS, Issue.Status.RESOLVED),
     }
     transition_error = ""
     transition_note = ""
+    if request.method == "POST" and request.POST.get("action") == "internal_note" and can_manage:
+        internal_note_form = IssueInternalNoteForm(request.POST)
+        if internal_note_form.is_valid():
+            IssueUpdate.objects.create(
+                issue=issue,
+                author=request.user,
+                message=internal_note_form.cleaned_data["message"].strip(),
+                is_internal=True,
+            )
+            return redirect("inventory:issue_detail", issue_id=issue.pk)
+
+    if request.method == "POST" and request.POST.get("action") == "public_comment" and can_comment:
+        public_comment_form = IssuePublicCommentForm(request.POST)
+        if public_comment_form.is_valid():
+            IssueUpdate.objects.create(
+                issue=issue,
+                author=request.user,
+                message=public_comment_form.cleaned_data["message"],
+            )
+            notify_public_activity(issue, request.user, Notification.Event.REPLY)
+            return redirect("inventory:issue_detail", issue_id=issue.pk)
+
+    if request.method == "POST" and request.POST.get("action") == "share" and can_share:
+        share_form = IssueParticipantForm(request.POST, issue=issue)
+        if share_form.is_valid():
+            selected_users = share_form.cleaned_data["participants"]
+            selected_ids = list(selected_users.values_list("pk", flat=True))
+            existing_ids = set(
+                IssueParticipant.objects.filter(issue=issue).values_list("user_id", flat=True)
+            )
+            IssueParticipant.objects.filter(issue=issue).exclude(user_id__in=selected_ids).delete()
+            for participant in selected_users:
+                IssueParticipant.objects.get_or_create(
+                    issue=issue,
+                    user=participant,
+                    defaults={"invited_by": request.user},
+                )
+            added_users = selected_users.exclude(pk__in=existing_ids)
+            notify_shared_users(issue, request.user, added_users)
+            return redirect("inventory:issue_detail", issue_id=issue.pk)
+
     if request.method == "POST" and request.POST.get("action") == "quick_start" and can_manage:
         if issue.status == Issue.Status.NEW and issue.assigned_to_id in (None, request.user.pk):
             old_status = issue.status
@@ -424,6 +486,7 @@ def issue_detail(request, issue_id):
                 old_status=old_status,
                 new_status=issue.status,
             )
+            notify_public_activity(issue, request.user, Notification.Event.STATUS)
         return redirect("inventory:issue_detail", issue_id=issue.pk)
 
     if request.method == "POST" and request.POST.get("action") == "transition" and can_manage:
@@ -452,6 +515,7 @@ def issue_detail(request, issue_id):
                     old_status=old_status,
                     new_status=next_status,
                 )
+                notify_public_activity(issue, request.user, Notification.Event.STATUS)
                 return redirect("inventory:issue_detail", issue_id=issue.pk)
 
     if request.method == "POST" and request.POST.get("action") == "reporter_confirmation":
@@ -479,11 +543,15 @@ def issue_detail(request, issue_id):
                 old_status=old_status,
                 new_status=issue.status,
             )
+            notify_public_activity(issue, request.user, Notification.Event.STATUS)
             return redirect("inventory:issue_detail", issue_id=issue.pk)
 
     if request.method == "POST" and request.POST.get("action") == "manage" and can_manage:
         management_form = IssueManagementForm(
-            request.POST, actor=request.user, device=issue.device
+            request.POST,
+            actor=request.user,
+            device=issue.device,
+            current_team=issue.assigned_unit or issue.device.unit,
         )
         if management_form.is_valid():
             old_priority = issue.priority
@@ -517,7 +585,10 @@ def issue_detail(request, issue_id):
                     issue=issue,
                     author=request.user,
                     message=" · ".join(changes),
+                    is_internal=True,
                 )
+                if old_assigned_to_id != issue.assigned_to_id or old_assigned_unit_id != issue.assigned_unit_id:
+                    notify_assignment_changed(issue, request.user)
             return redirect("inventory:issue_detail", issue_id=issue.pk)
     else:
         management_form = None
@@ -533,6 +604,7 @@ def issue_detail(request, issue_id):
         management_form = IssueManagementForm(
             actor=request.user,
             device=issue.device,
+            current_team=issue.assigned_unit or issue.device.unit,
             initial={
                 "priority": issue.priority,
                 "assigned_to": issue.assigned_to_id,
@@ -541,7 +613,7 @@ def issue_detail(request, issue_id):
         )
     updates = issue.updates.select_related("author").order_by("created_at")
     if not can_manage:
-        updates = updates.filter(Q(old_status__gt="") | Q(new_status__gt=""))
+        updates = updates.filter(is_internal=False)
     status_labels = dict(Issue.Status.choices)
     for update in updates:
         update.is_status_update = bool(update.old_status or update.new_status)
@@ -565,6 +637,14 @@ def issue_detail(request, issue_id):
             "transition_note": transition_note,
             "updates": updates,
             "management_form": management_form if can_manage else None,
+            "internal_note_form": internal_note_form,
+            "public_comment_form": public_comment_form,
+            "share_form": share_form,
+            "can_share": can_share,
+            "has_share_candidates": bool(share_form and share_form.fields["participants"].queryset.exists()),
+            "can_comment": can_comment,
+            "is_participant": is_participant,
+            "issue_participants": issue.participants.select_related("user"),
             "can_manage": can_manage,
             "can_view_device": scoped_devices_for(request.user).filter(pk=issue.device_id).exists(),
             "available_transitions": [

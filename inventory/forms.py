@@ -1,7 +1,7 @@
 from django import forms
 from django.contrib.auth import get_user_model
 
-from support.models import Issue
+from support.models import Issue, IssueParticipant
 from organization.access import it_assignees_for, it_units_for, is_it_manager, is_primary_admin
 from organization.models import Unit
 
@@ -25,6 +25,70 @@ class IssueCreateForm(forms.ModelForm):
         self.fields["device"].queryset = devices
 
 
+class IssueInternalNoteForm(forms.Form):
+    message = forms.CharField(
+        label="IT iç notu",
+        max_length=2000,
+        widget=forms.Textarea(
+            attrs={
+                "rows": 3,
+                "placeholder": "Bu notu yalnızca IT ekibi görebilir.",
+            }
+        ),
+    )
+
+    def clean_message(self):
+        message = self.cleaned_data["message"].strip()
+        if not message:
+            raise forms.ValidationError("İç not boş olamaz.")
+        return message
+
+
+class IssuePublicCommentForm(forms.Form):
+    message = forms.CharField(
+        label="Yanıt / ek bilgi",
+        max_length=2000,
+        widget=forms.Textarea(
+            attrs={
+                "rows": 3,
+                "placeholder": "Talep hakkında ek bilgi veya yanıt yazın.",
+            }
+        ),
+    )
+
+    def clean_message(self):
+        message = self.cleaned_data["message"].strip()
+        if not message:
+            raise forms.ValidationError("Mesaj boş olamaz.")
+        return message
+
+
+class IssueParticipantForm(forms.Form):
+    participants = forms.ModelMultipleChoiceField(
+        label="Birimden katılımcılar",
+        queryset=User.objects.none(),
+        required=False,
+        widget=forms.CheckboxSelectMultiple,
+        help_text="Seçilen kişiler bu talebi ve kullanıcıya açık yanıtları görebilir. IT iç notları gizli kalır.",
+    )
+
+    def __init__(self, *args, issue, **kwargs):
+        super().__init__(*args, **kwargs)
+        unit_id = issue.device.unit_id
+        candidates = User.objects.none()
+        if unit_id:
+            candidates = User.objects.filter(
+                is_active=True,
+                role=User.Role.UNIT_USER,
+                scopes__unit_id=unit_id,
+            ).exclude(pk=issue.reported_by_id).distinct().order_by("last_name", "first_name", "username")
+        self.fields["participants"].queryset = candidates
+        self.fields["participants"].initial = IssueParticipant.objects.filter(
+            issue=issue,
+            user__in=candidates,
+        ).values_list("user_id", flat=True)
+
+
 class IssueManagementForm(forms.Form):
     assigned_unit = forms.ModelChoiceField(
         label="Yönlendirilen ekip",
@@ -41,8 +105,11 @@ class IssueManagementForm(forms.Form):
     priority = forms.ChoiceField(label="Öncelik", choices=Issue.Priority.choices)
 
     def __init__(self, *args, actor, device, **kwargs):
+        current_team = kwargs.pop("current_team", None)
         super().__init__(*args, **kwargs)
         allowed_units = it_units_for(actor)
+        if not is_primary_admin(actor):
+            allowed_units = allowed_units.filter(pk=current_team.pk) if current_team else Unit.objects.none()
         self.fields["assigned_unit"].queryset = allowed_units
 
         if self.is_bound:
@@ -69,9 +136,9 @@ class IssueManagementForm(forms.Form):
             )
 
         self.fields["assigned_unit"].help_text = (
-            "Önce ekibi seç. Liste, seçilen ekibin aktif IT sorumlularını gösterecek."
+            "Cihazın birimi varsayılan ilk ekiptir. Başka ekibe aktardığında yeni ekip işi devralır; admin kaydı izlemeye devam eder."
             if is_primary_admin(actor)
-            else "Yalnızca kendi yetki kapsamındaki ekiplere yönlendirebilirsin."
+            else "Ekipler arası aktarımı admin yapar. Burada mevcut ekibin kuyruğunu ve sorumlusunu yönetebilirsin."
         )
         self.fields["assigned_to"].help_text = (
             "Kişi seçmezsen kayıt ekibin ortak kuyruğunda kalır."

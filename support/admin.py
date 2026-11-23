@@ -12,7 +12,8 @@ from organization.admin_access import RoleScopedAdmin
 from organization.models import Unit
 from django.contrib.auth import get_user_model
 
-from .models import Issue, IssueUpdate
+from .models import Issue, IssueUpdate, Notification
+from .services import notify_assignment_changed, notify_new_issue, notify_public_activity
 
 User = get_user_model()
 
@@ -23,7 +24,7 @@ class IssueUpdateAdmin(RoleScopedAdmin):
     list_display = ("issue", "author", "old_status", "new_status", "created_at")
     list_filter = ("created_at", "old_status", "new_status")
     search_fields = ("issue__title", "issue__device__asset_tag", "author__username", "message")
-    readonly_fields = ("issue", "author", "message", "old_status", "new_status", "created_at")
+    readonly_fields = ("issue", "author", "message", "old_status", "new_status", "is_internal", "created_at")
 
     def manager_queryset(self, request, queryset):
         return queryset.filter(issue__in=visible_issues_for(request.user))
@@ -42,7 +43,7 @@ class IssueUpdateInline(admin.TabularInline):
     model = IssueUpdate
     extra = 0
     can_delete = False
-    fields = ("message", "old_status", "new_status", "author", "created_at")
+    fields = ("message", "old_status", "new_status", "is_internal", "author", "created_at")
     readonly_fields = fields
 
     def has_add_permission(self, request, obj=None):
@@ -64,10 +65,18 @@ class IssueAdmin(RoleScopedAdmin):
         if db_field.name == "device" and is_it_manager(request.user):
             kwargs["queryset"] = scoped_devices(request.user)
         elif db_field.name == "assigned_unit":
-            kwargs["queryset"] = it_units_for(request.user)
+            available_units = it_units_for(request.user)
+            if is_it_manager(request.user):
+                object_id = request.resolver_match.kwargs.get("object_id")
+                issue = self.get_object(request, object_id) if object_id else None
+                current_team = (issue.assigned_unit or issue.device.unit) if issue else None
+                kwargs["queryset"] = available_units.filter(pk=current_team.pk) if current_team else Unit.objects.none()
+            else:
+                kwargs["queryset"] = available_units
         elif db_field.name == "assigned_to":
             device = None
             device_id = request.POST.get("device")
+            issue = None
             if device_id:
                 from inventory.models import Device
 
@@ -86,7 +95,7 @@ class IssueAdmin(RoleScopedAdmin):
                     unit=Unit.objects.filter(pk=assigned_unit_id).first(),
                 )
             else:
-                issue_unit = getattr(device, "unit", None)
+                issue_unit = (issue.assigned_unit or issue.device.unit) if issue else getattr(device, "unit", None)
                 kwargs["queryset"] = (
                     it_assignees_for(request.user, unit=issue_unit)
                     if issue_unit
@@ -116,6 +125,7 @@ class IssueAdmin(RoleScopedAdmin):
                 message=f"Durum: {dict(Issue.Status.choices)[obj.status]}",
                 new_status=obj.status,
             )
+            notify_new_issue(obj, request.user)
             return
 
         if previous.status != obj.status:
@@ -127,6 +137,7 @@ class IssueAdmin(RoleScopedAdmin):
                 old_status=previous.status,
                 new_status=obj.status,
             )
+            notify_public_activity(obj, request.user, Notification.Event.STATUS)
 
         changes = []
         if previous.assigned_unit_id != obj.assigned_unit_id:
@@ -138,7 +149,14 @@ class IssueAdmin(RoleScopedAdmin):
         if previous.priority != obj.priority:
             changes.append(f"Öncelik: {obj.get_priority_display()}")
         if changes:
-            IssueUpdate.objects.create(issue=obj, author=request.user, message=" · ".join(changes))
+            IssueUpdate.objects.create(
+                issue=obj,
+                author=request.user,
+                message=" · ".join(changes),
+                is_internal=True,
+            )
+        if previous.assigned_unit_id != obj.assigned_unit_id or previous.assigned_to_id != obj.assigned_to_id:
+            notify_assignment_changed(obj, request.user)
 
     def has_delete_permission(self, request, obj=None):
         return False

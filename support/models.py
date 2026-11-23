@@ -66,3 +66,86 @@ class IssueUpdate(models.Model):
 
     def __str__(self):
         return f"{self.issue}: {self.created_at:%Y-%m-%d %H:%M}"
+
+
+class IssueParticipant(models.Model):
+    """A unit colleague explicitly invited to follow a support request."""
+
+    issue = models.ForeignKey(
+        Issue,
+        on_delete=models.CASCADE,
+        related_name="participants",
+        verbose_name="Arıza bildirimi",
+    )
+    user = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        on_delete=models.CASCADE,
+        related_name="issue_participations",
+        verbose_name="Katılımcı",
+    )
+    invited_by = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name="invited_issue_participations",
+        verbose_name="Davet eden",
+    )
+    created_at = models.DateTimeField(auto_now_add=True, verbose_name="Davet tarihi")
+
+    class Meta:
+        ordering = ["created_at", "user__username"]
+        verbose_name = "Arıza talebi katılımcısı"
+        verbose_name_plural = "Arıza talebi katılımcıları"
+        constraints = [
+            models.UniqueConstraint(
+                fields=["issue", "user"],
+                name="unique_issue_participant",
+            )
+        ]
+
+    def __str__(self):
+        return f"{self.user} — {self.issue}"
+
+
+class Notification(models.Model):
+    class Event(models.TextChoices):
+        NEW_ISSUE = "new_issue", "Yeni arıza"
+        ASSIGNMENT = "assignment", "Atama değişikliği"
+        STATUS = "status", "Durum değişikliği"
+        REPLY = "reply", "Yeni yanıt"
+        SHARED = "shared", "Talep paylaşımı"
+
+    recipient = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        on_delete=models.CASCADE,
+        related_name="notifications",
+        verbose_name="Alıcı",
+    )
+    actor = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name="sent_notifications",
+        verbose_name="İşlemi yapan",
+    )
+    issue = models.ForeignKey(
+        Issue,
+        on_delete=models.CASCADE,
+        related_name="notifications",
+        verbose_name="Arıza bildirimi",
+    )
+    event = models.CharField(max_length=20, choices=Event.choices, verbose_name="Bildirim türü")
+    message = models.CharField(max_length=240, verbose_name="Bildirim")
+    created_at = models.DateTimeField(auto_now_add=True, verbose_name="Oluşturulma tarihi")
+    read_at = models.DateTimeField(null=True, blank=True, verbose_name="Okunma tarihi")
+
+    class Meta:
+        ordering = ["-created_at", "-pk"]
+        indexes = [models.Index(fields=["recipient", "read_at", "created_at"])]
+        verbose_name = "Uygulama bildirimi"
+        verbose_name_plural = "Uygulama bildirimleri"
+
+    def __str__(self):
+        return f"{self.recipient}: {self.message}"

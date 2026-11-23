@@ -11,7 +11,11 @@
 - Cihazları çalışanlara atama, devir ve teslim tarihlerini atama geçmişinde izleme.
 - Fatura ve garanti bilgilerini kaydetme.
 - Kullanıcıların erişim kapsamındaki cihazlarda arıza bildirimi oluşturması ve kendi bildirimlerinin durumunu takip etmesi.
-- IT ekibinin arızaları üstlenmesi, sorumlu ataması, öncelik belirlemesi ve durumları ilerletmesi.
+- Arızaların cihazın birimine göre başlangıç ekibine yönlendirilmesi; adminin ekipler arasında aktarım yapabilmesi.
+- IT sorumlularının kendi ekip kuyruklarını yönetmesi, ekip içinden sorumlu ataması, öncelik belirlemesi ve durumları ilerletmesi.
+- Kullanıcının aynı birimdeki seçili çalışanları arıza talebine katılımcı olarak ekleyebilmesi.
+- Talep sahibi, katılımcılar ve yetkili IT ekibi arasında kullanıcıya açık yanıtlaşma; yalnızca IT ekibinin görebildiği iç notlar.
+- Yeni arıza, atama, durum değişikliği, yanıt ve talep paylaşımı için uygulama içi bildirimler.
 - Beklemeye alınan arızalarda kullanıcıdan beklenen bilgi veya işlemi açıklayan not gösterme.
 - Çözümün kullanıcı tarafından onaylanması veya sorun sürüyorsa yeniden açılması.
 - Cihaz ve arıza raporları ile CSV dışa aktarımları.
@@ -27,11 +31,11 @@ Yeni departman veya birim eklerken önce organizasyon kaydı oluşturulur, sonra
 
 ## Arıza iş akışı
 
-1. Kullanıcı bir cihaz için **Yeni** arıza bildirimi açar.
-2. Bildirim, ilgili departman/birim kapsamındaki çözüm sürecine alınarak **Üzerinde çalışılıyor** durumuna geçirilir.
-3. Kullanıcıdan bilgi veya işlem gerekiyorsa kayıt, açıklama notuyla **Beklemede** durumuna alınır. Not kullanıcıya görünür.
-4. Çözüm sunulduğunda durum **Çözüldü** olur.
-5. Bildiren kullanıcı çözümü onaylayarak kaydı kapatabilir veya sorun sürüyorsa yeniden açabilir.
+1. Kullanıcı erişebildiği bir cihaz için **Yeni** arıza bildirimi açar. Kayıt ilk olarak cihazın bağlı olduğu birimin ekibine yönlendirilir.
+2. IT ekibi kaydı üstlenir veya ekip içinde bir sorumluya atar. Admin yanlış ekibe yönlendirilmiş kayıtları başka ekibe aktarabilir ve tüm kayıtları görmeye devam eder. Aktarım sonrası arıza yeni ekibin kuyruğuna geçer.
+3. Kullanıcı talebi aynı birimdeki seçili çalışanlarla paylaşabilir. Katılımcılar talebi ve kullanıcıya açık yanıtları görür; cihaz envanterine veya IT iç notlarına erişim kazanmaz.
+4. IT ekibi kullanıcıya açık yanıt gönderebilir veya yalnızca IT ekibinin görebildiği iç not ekleyebilir. Atama, yanıt ve durum değişiklikleri için uygulama içi bildirim oluşturulur.
+5. Kullanıcıdan bilgi veya işlem gerekiyorsa kayıt, açıklama notuyla **Beklemede** durumuna alınır. Çözüm sunulduğunda bildiren kullanıcı kaydı kapatabilir veya sorun sürüyorsa yeniden açabilir.
 
 Durum geçmişinde değişikliği yapan kişi, tarih ve varsa açıklama notu gösterilir.
 

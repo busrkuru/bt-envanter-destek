@@ -15,6 +15,12 @@
     nav a, .user a { color: white; text-decoration: none; }
     nav a { padding: 8px 10px; border-radius: 7px; }
     nav a:hover, nav a[aria-current="page"] { background: #ffffff20; text-decoration: none; }
+    .notification-badge { display: inline-grid; place-items: center; min-width: 20px; height: 20px; margin-left: 4px; padding: 0 5px; border-radius: 12px; background: #d94d42; color: white; font-size: .75rem; font-weight: 700; }
+    .notification-row { display: flex; justify-content: space-between; gap: 18px; align-items: center; color: inherit; text-decoration: none; }
+    .notification-row:hover { text-decoration: none; background: #f6fafb; }
+    .notification-row.is-unread { border-left: 4px solid var(--blue); }
+    .notification-row p { margin: 4px 0 0; }
+    .notification-row time { flex: 0 0 auto; color: #647780; font-size: .9rem; }
     .user { display: flex; gap: 12px; align-items: center; font-size: .92rem; }
     .user form { margin: 0; }
     .user button { background: transparent; border: 0; color: white; cursor: pointer; font: inherit; text-decoration: underline; padding: 0; }
@@ -120,6 +126,13 @@
     .issue-management p label { min-height: 26px; margin: 0; }
     .issue-management p small { display: block; color: #5b6d76; line-height: 1.4; }
     .issue-management > button { align-self: start; margin-top: 31px; min-height: 46px; white-space: nowrap; }
+    .internal-note-form { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 12px; align-items: end; }
+    .internal-note-form textarea { width: 100%; min-height: 90px; resize: vertical; }
+    .public-comment-form textarea { width: 100%; min-height: 100px; resize: vertical; }
+    .participant-list { display: flex; flex-wrap: wrap; gap: 8px 20px; margin: 0 0 16px; padding-left: 20px; }
+    .participant-form ul { display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 8px 16px; list-style: none; margin: 8px 0 14px; padding: 0; }
+    .participant-form li label { display: flex; align-items: flex-start; gap: 8px; font-weight: 500; }
+    .participant-form input[type=checkbox] { width: auto; margin-top: 5px; }
     .form-panel { max-width: 760px; }
     .form-stack { display: grid; gap: 18px; }
     .form-field input, .form-field select, .form-field textarea, .issue-management select { width: 100%; }
@@ -146,6 +159,7 @@
       .filter-search { grid-column: 1 / -1; }
       .issue-management { grid-template-columns: 1fr; gap: 12px; }
       .issue-management > button { width: 100%; margin-top: 0; white-space: normal; }
+      .internal-note-form { grid-template-columns: 1fr; }
       .progress-steps li { font-size: .76rem; }
       .progress-steps .step-marker { width: 30px; height: 30px; }
       .progress-steps li::before { top: 14px; }
@@ -167,6 +181,7 @@
       <a href="{% url 'inventory:dashboard' %}"{% if current == 'dashboard' %} aria-current="page"{% endif %}>Genel bakış</a>
       <a href="{% url 'inventory:device_list' %}"{% if current == 'device_list' or current == 'device_detail' %} aria-current="page"{% endif %}>{% if request.user.role == 'unit_user' %}Cihazlarım{% else %}Cihazlar{% endif %}</a>
       <a href="{% url 'inventory:issue_list' %}"{% if current == 'issue_list' or current == 'issue_detail' or current == 'issue_create' %} aria-current="page"{% endif %}>{% if request.user.role == 'unit_user' %}Arızalarım{% else %}Arıza bildirimleri{% endif %}</a>
+      <a href="{% url 'support:notification_list' %}"{% if current == 'notification_list' or current == 'notification_open' %} aria-current="page"{% endif %}>Bildirimler{% if notification_unread_count %}<span class="notification-badge" aria-label="{{ notification_unread_count }} okunmamış bildirim">{{ notification_unread_count }}</span>{% endif %}</a>
       {% if request.user.role != 'unit_user' %}<a href="{% url 'inventory:reports' %}"{% if current == 'reports' %} aria-current="page"{% endif %}>Raporlar</a>{% endif %}
       {% if request.user.is_staff %}<a href="{% url 'admin:index' %}">Yönetim</a>{% endif %}
       {% endwith %}

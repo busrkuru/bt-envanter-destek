@@ -1,0 +1,16 @@
+{% extends "base.html" %}
+{% block title %}Bildirimler | BT Envanter ve Destek{% endblock %}
+{% block content %}
+<div class="welcome">
+  <div><h1>Bildirimler</h1><p class="sub">Arızalarınla ilgili atama, durum ve yanıt güncellemeleri.</p></div>
+  {% if notification_unread_count %}<form method="post">{% csrf_token %}<input type="hidden" name="action" value="mark_all_read"><button class="button secondary-button" type="submit">Tümünü okundu işaretle</button></form>{% endif %}
+</div>
+{% if notifications %}
+  {% for notification in notifications %}
+  <a class="panel notification-row{% if not notification.read_at %} is-unread{% endif %}" href="{% url 'support:notification_open' notification_id=notification.pk %}">
+    <div><strong>{{ notification.get_event_display }}</strong><p>{{ notification.message }}</p><small class="sub">{{ notification.issue.device.asset_tag }} · {{ notification.created_at|date:"d.m.Y H:i" }}</small></div>
+    <time datetime="{{ notification.created_at|date:'c' }}">{% if notification.read_at %}Okundu{% else %}Okunmadı{% endif %}</time>
+  </a>
+  {% endfor %}
+{% else %}<section class="panel empty">Henüz bildirimin yok.</section>{% endif %}
+{% endblock %}

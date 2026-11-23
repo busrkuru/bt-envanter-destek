@@ -56,17 +56,54 @@
   </section>
 </div>
 
+{% if can_manage or can_share or is_participant %}
 <section class="panel">
-  <h2>{% if can_manage %}İşlem geçmişi{% else %}Durum geçmişi{% endif %}</h2>
-  <p class="sub">{% if can_manage %}Durum, ekip ve sorumlu değişiklikleri burada görünür.{% else %}Arızanın durumundaki değişiklikler burada tarih sırasıyla gösterilir.{% endif %}</p>
+  <h2>Talep katılımcıları</h2>
+  <p class="sub">Bu talep yalnızca açan kişi, yetkili IT ekibi ve burada listelenen birim katılımcıları tarafından görülür.</p>
+  {% if issue_participants %}<ul class="participant-list">
+    {% for participant in issue_participants %}<li>{{ participant.user.get_full_name|default:participant.user.username }}</li>{% endfor %}
+  </ul>{% else %}<p class="empty">Henüz başka katılımcı eklenmedi.</p>{% endif %}
+  {% if can_share %}
+  <form method="post" class="participant-form">
+    {% csrf_token %}<input type="hidden" name="action" value="share">
+    <div class="form-field">
+      <label class="field-label" for="id_participants">{{ share_form.participants.label }}</label>
+      {{ share_form.participants }}{{ share_form.participants.errors }}
+      {% if share_form.participants.help_text %}<small>{{ share_form.participants.help_text }}</small>{% endif %}
+      {% if not has_share_candidates %}<small>Bu cihazın biriminde paylaşım için uygun başka kullanıcı bulunmuyor.</small>{% endif %}
+    </div>
+    <button class="button" type="submit">Katılımcıları kaydet</button>
+  </form>
+  {% endif %}
+</section>
+{% endif %}
+
+<section class="panel">
+  <h2>{% if can_manage %}İşlem geçmişi{% else %}Talep geçmişi{% endif %}</h2>
+  <p class="sub">{% if can_manage %}Durum, ekip, sorumlu değişiklikleri ve IT iç notları burada görünür.{% else %}Durum değişiklikleri ve kullanıcıya açık yazışmalar burada tarih sırasıyla gösterilir.{% endif %}</p>
   {% if updates %}<ol class="timeline">
     {% for update in updates %}<li>
-      {% if update.is_status_update %}<span class="pill status-{{ update.new_status }}">{% if update.old_status_label %}{{ update.old_status_label }} → {% endif %}{{ update.new_status_label }}</span>{% elif can_manage %}<span class="pill">Atama / öncelik değişikliği</span>{% endif %}
+      {% if update.is_status_update %}<span class="pill status-{{ update.new_status }}">{% if update.old_status_label %}{{ update.old_status_label }} → {% endif %}{{ update.new_status_label }}</span>{% elif can_manage and update.is_internal %}<span class="pill">IT iç kaydı</span>{% else %}<span class="pill">Yanıt</span>{% endif %}
       <div class="timeline-meta"><strong>{{ update.author.get_full_name|default:update.author.username }}</strong><small>{{ update.created_at|date:"d.m.Y H:i" }}</small></div>
       {% if update.activity_note %}<p class="timeline-message">{{ update.activity_note }}</p>{% endif %}
     </li>{% endfor %}
-  </ol>{% else %}<p class="empty">Henüz durum güncellemesi yok. Mevcut durum: <strong>{{ issue.get_status_display }}</strong>.</p>{% endif %}
+  </ol>{% else %}<p class="empty">Henüz geçmiş kaydı yok. Mevcut durum: <strong>{{ issue.get_status_display }}</strong>.</p>{% endif %}
 </section>
+
+{% if can_comment %}
+<section class="panel">
+  <h2>Talep yazışması</h2>
+  <p class="sub">Buraya yazılan mesajı talep sahibi, katılımcılar ve yetkili IT ekibi görebilir. IT iç notları bu alanda görünmez.</p>
+  <form method="post" class="public-comment-form">
+    {% csrf_token %}<input type="hidden" name="action" value="public_comment">
+    <div class="form-field{% if public_comment_form.message.errors %} field-has-error{% endif %}">
+      <label class="field-label" for="{{ public_comment_form.message.id_for_label }}">{{ public_comment_form.message.label }}</label>
+      {{ public_comment_form.message }}{{ public_comment_form.message.errors }}
+    </div>
+    <button class="button" type="submit">Yanıtı gönder</button>
+  </form>
+</section>
+{% endif %}
 
 {% if can_manage %}
 <details class="panel history-panel" open>
@@ -89,13 +126,13 @@
         <button class="button{% if value == 'waiting' %} secondary-button{% endif %}" type="submit" name="next_status" value="{{ value }}">
           {% if value == "in_progress" and issue.status == "new" %}İşe başla{% elif value == "in_progress" %}Çalışmaya devam et{% elif value == "waiting" %}Beklemeye al{% elif value == "resolved" %}Çözüldü olarak işaretle{% elif value == "closed" %}Kaydı kapat{% else %}{{ label }}{% endif %}
         </button>
-      {% endfor %}
+  {% endfor %}
     </div>
     {% endif %}
   </form>
   {% else %}<p class="empty">{% if issue.status == "new" %}Bu kayıt başka bir IT sorumlusuna atanmış; işe başlatma işlemini atanan sorumlu yapabilir.{% else %}Bu kayıt için başka bir durum adımı bulunmuyor.{% endif %}</p>{% endif %}
   <hr class="section-divider">
-  <p class="sub">Arızayı doğru ekibe yönlendir. Sorumlu seçmezsen kayıt ekibin ortak kuyruğunda kalır.</p>
+  <p class="sub">{% if request.user.role == "admin" or request.user.is_superuser %}Cihazın birimi ilk ekiptir. Başka ekibe aktardığında sorumluluk o ekibe geçer; admin olarak tüm kaydı görmeye devam edersin.{% else %}Ekipler arası aktarımı admin yapar. Sen mevcut ekibin kuyruğunu ve ekip içi sorumlu atamasını yönetebilirsin.{% endif %} Sorumlu seçilmezse kayıt ekibin ortak kuyruğunda kalır.</p>
   <form method="post">
     {% csrf_token %}<input type="hidden" name="action" value="manage">
     {{ management_form.non_field_errors }}
@@ -106,6 +143,17 @@
       </p>{% endfor %}
       <button class="button" type="submit">Atama ve önceliği kaydet</button>
     </div>
+  </form>
+  <hr class="section-divider">
+  <h3>Yalnızca IT ekibine görünür iç not</h3>
+  <p class="sub">Bu alana yazılan not bildiren kullanıcıya gösterilmez.</p>
+  <form method="post" class="internal-note-form">
+    {% csrf_token %}<input type="hidden" name="action" value="internal_note">
+    <div class="form-field{% if internal_note_form.message.errors %} field-has-error{% endif %}">
+      <label class="field-label" for="{{ internal_note_form.message.id_for_label }}">{{ internal_note_form.message.label }}</label>
+      {{ internal_note_form.message }}{{ internal_note_form.message.errors }}
+    </div>
+    <button class="button" type="submit">İç notu kaydet</button>
   </form>
 </details>
 {% endif %}
