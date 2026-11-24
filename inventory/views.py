@@ -1,5 +1,6 @@
 import csv
 from datetime import timedelta
+from pathlib import Path
 
 from django.contrib.auth.decorators import login_required
 from django.core.exceptions import PermissionDenied
@@ -7,7 +8,7 @@ from django.core.paginator import Paginator
 from django.db import transaction
 from django.db.models import CharField, Count, Prefetch, Q
 from django.db.models.functions import Cast
-from django.http import HttpResponse
+from django.http import FileResponse, Http404, HttpResponse
 from django.shortcuts import get_object_or_404, redirect, render
 from django.utils import timezone
 
@@ -19,9 +20,10 @@ from organization.access import (
     visible_issues_for as issues_visible_to,
 )
 from organization.models import Unit
-from support.models import Issue, IssueUpdate
+from support.models import Issue, IssueAttachment, IssueUpdate
 from support.models import Notification
 from support.services import (
+    notify_attachment_added,
     notify_assignment_changed,
     notify_new_issue,
     notify_public_activity,
@@ -54,15 +56,21 @@ def require_it_access(request):
 def dashboard(request):
     devices = scoped_devices_for(request.user)
     visible_issues = visible_issues_for(request.user)
+    open_issues = visible_issues.exclude(status__in=[Issue.Status.RESOLVED, Issue.Status.CLOSED])
     context = {
         "device_count": devices.count(),
         "active_device_count": devices.filter(is_active=True).count(),
-        "open_issue_count": visible_issues.exclude(status__in=[Issue.Status.RESOLVED, Issue.Status.CLOSED]).count(),
+        "open_issue_count": open_issues.count(),
         "repair_count": devices.filter(status=Device.Status.REPAIR).count(),
         "recent_issues": visible_issues.select_related(
             "device", "reported_by", "assigned_unit", "assigned_to"
         ).order_by("-created_at")[:5],
     }
+    if user_is_it(request.user):
+        context.update(
+            my_assigned_issue_count=open_issues.filter(assigned_to=request.user).count(),
+            team_queue_issue_count=open_issues.filter(assigned_to__isnull=True).count(),
+        )
     return render(request, "inventory/dashboard.html", context)
 
 
@@ -321,6 +329,16 @@ def issue_list(request):
     status = request.GET.get("status", "").strip()
     priority = request.GET.get("priority", "").strip()
     team_id = request.GET.get("team", "").strip()
+    view = request.GET.get("view", "").strip()
+    if user_is_it(request.user):
+        if view == "mine":
+            issues = issues.filter(assigned_to=request.user)
+        elif view == "queue":
+            issues = issues.filter(assigned_to__isnull=True)
+        else:
+            view = ""
+    else:
+        view = ""
     team_choices = it_units_for(request.user) if user_is_it(request.user) else Unit.objects.none()
     if team_id and user_is_it(request.user):
         selected_team = team_choices.filter(pk=team_id).first()
@@ -367,6 +385,7 @@ def issue_list(request):
             "selected_priority": priority,
             "selected_team": team_id,
             "selected_team_id": int(team_id) if team_id else None,
+            "selected_view": view,
             "team_choices": team_choices,
             "status_choices": Issue.Status.choices,
             "priority_choices": Issue.Priority.choices,
@@ -376,17 +395,25 @@ def issue_list(request):
 
 
 @login_required
+@transaction.atomic
 def issue_create(request):
     from .forms import IssueCreateForm
     from support.models import IssueUpdate
 
     if request.method == "POST":
-        form = IssueCreateForm(request.POST, devices=scoped_devices_for(request.user))
+        form = IssueCreateForm(request.POST, request.FILES, devices=scoped_devices_for(request.user))
         if form.is_valid():
             issue = form.save(commit=False)
             issue.reported_by = request.user
             issue.assigned_unit = issue.device.unit
             issue.save()
+            for uploaded_file in form.cleaned_data.get("attachments", []):
+                IssueAttachment.objects.create(
+                    issue=issue,
+                    uploaded_by=request.user,
+                    file=uploaded_file,
+                    original_name=uploaded_file.name,
+                )
             IssueUpdate.objects.create(
                 issue=issue,
                 author=request.user,
@@ -407,6 +434,7 @@ def issue_create(request):
 @transaction.atomic
 def issue_detail(request, issue_id):
     from .forms import (
+        IssueAttachmentForm,
         IssueInternalNoteForm,
         IssueManagementForm,
         IssueParticipantForm,
@@ -423,9 +451,11 @@ def issue_detail(request, issue_id):
     is_participant = issue.participants.filter(user=request.user).exists()
     can_share = is_reporter and getattr(request.user, "role", None) == "unit_user"
     can_comment = can_manage or is_reporter or is_participant
+    can_attach = can_manage or is_reporter or is_participant
     internal_note_form = IssueInternalNoteForm() if can_manage else None
     public_comment_form = IssuePublicCommentForm() if can_comment else None
     share_form = IssueParticipantForm(issue=issue) if can_share else None
+    attachment_form = IssueAttachmentForm(allow_internal=can_manage) if can_attach else None
     transitions = {
         Issue.Status.IN_PROGRESS: (Issue.Status.WAITING, Issue.Status.RESOLVED),
         Issue.Status.WAITING: (Issue.Status.IN_PROGRESS, Issue.Status.RESOLVED),
@@ -471,6 +501,32 @@ def issue_detail(request, issue_id):
                 )
             added_users = selected_users.exclude(pk__in=existing_ids)
             notify_shared_users(issue, request.user, added_users)
+            return redirect("inventory:issue_detail", issue_id=issue.pk)
+
+    if request.method == "POST" and request.POST.get("action") == "upload_attachments" and can_attach:
+        attachment_form = IssueAttachmentForm(
+            request.POST,
+            request.FILES,
+            allow_internal=can_manage,
+        )
+        if attachment_form.is_valid():
+            is_internal = can_manage and attachment_form.cleaned_data.get("is_internal", False)
+            uploaded_files = attachment_form.cleaned_data["attachments"]
+            for uploaded_file in uploaded_files:
+                IssueAttachment.objects.create(
+                    issue=issue,
+                    uploaded_by=request.user,
+                    file=uploaded_file,
+                    original_name=uploaded_file.name,
+                    is_internal=is_internal,
+                )
+            IssueUpdate.objects.create(
+                issue=issue,
+                author=request.user,
+                message=f"{len(uploaded_files)} dosya eki eklendi.",
+                is_internal=is_internal,
+            )
+            notify_attachment_added(issue, request.user, is_internal=is_internal)
             return redirect("inventory:issue_detail", issue_id=issue.pk)
 
     if request.method == "POST" and request.POST.get("action") == "quick_start" and can_manage:
@@ -640,6 +696,13 @@ def issue_detail(request, issue_id):
             "internal_note_form": internal_note_form,
             "public_comment_form": public_comment_form,
             "share_form": share_form,
+            "attachment_form": attachment_form,
+            "can_attach": can_attach,
+            "attachments": (
+                issue.attachments.select_related("uploaded_by")
+                if can_manage
+                else issue.attachments.select_related("uploaded_by").filter(is_internal=False)
+            ),
             "can_share": can_share,
             "has_share_candidates": bool(share_form and share_form.fields["participants"].queryset.exists()),
             "can_comment": can_comment,
@@ -704,3 +767,57 @@ def issue_detail(request, issue_id):
             }.get(issue.status, ""),
         },
     )
+
+
+@login_required
+def issue_attachment_download(request, issue_id, attachment_id):
+    attachment = _visible_issue_attachment(request, issue_id, attachment_id)
+    try:
+        file_handle = attachment.file.open("rb")
+    except (FileNotFoundError, OSError) as exc:
+        raise Http404("Dosya bulunamadı.") from exc
+    response = FileResponse(
+        file_handle,
+        as_attachment=True,
+        filename=attachment.original_name,
+        content_type="application/octet-stream",
+    )
+    response["X-Content-Type-Options"] = "nosniff"
+    response["Cache-Control"] = "private, no-store"
+    return response
+
+
+@login_required
+def issue_attachment_preview(request, issue_id, attachment_id):
+    attachment = _visible_issue_attachment(request, issue_id, attachment_id)
+    content_types = {
+        ".jpg": "image/jpeg",
+        ".jpeg": "image/jpeg",
+        ".png": "image/png",
+        ".webp": "image/webp",
+    }
+    content_type = content_types.get(Path(attachment.original_name).suffix.lower())
+    if not content_type:
+        raise Http404("Bu dosyanın önizlemesi bulunamadı.")
+    try:
+        file_handle = attachment.file.open("rb")
+    except (FileNotFoundError, OSError) as exc:
+        raise Http404("Dosya bulunamadı.") from exc
+    response = FileResponse(
+        file_handle,
+        as_attachment=False,
+        filename=attachment.original_name,
+        content_type=content_type,
+    )
+    response["X-Content-Type-Options"] = "nosniff"
+    response["Cache-Control"] = "private, no-store"
+    response["Cross-Origin-Resource-Policy"] = "same-origin"
+    return response
+
+
+def _visible_issue_attachment(request, issue_id, attachment_id):
+    issue = get_object_or_404(visible_issues_for(request.user), pk=issue_id)
+    attachments = IssueAttachment.objects.filter(issue=issue)
+    if not user_is_it(request.user):
+        attachments = attachments.filter(is_internal=False)
+    return get_object_or_404(attachments, pk=attachment_id)

@@ -1,5 +1,6 @@
 from django import forms
 from django.contrib.auth import get_user_model
+from pathlib import Path
 
 from support.models import Issue, IssueParticipant
 from organization.access import it_assignees_for, it_units_for, is_it_manager, is_primary_admin
@@ -8,7 +9,58 @@ from organization.models import Unit
 User = get_user_model()
 
 
+class MultipleFileInput(forms.ClearableFileInput):
+    allow_multiple_selected = True
+
+
+class IssueAttachmentFilesField(forms.FileField):
+    widget = MultipleFileInput
+
+    def clean(self, data, initial=None):
+        if not data:
+            if self.required:
+                raise forms.ValidationError(self.error_messages["required"], code="required")
+            return []
+        files = data if isinstance(data, (list, tuple)) else [data]
+        if len(files) > 5:
+            raise forms.ValidationError("Bir seferde en fazla 5 dosya yükleyebilirsin.")
+
+        cleaned_files = []
+        total_size = 0
+        for uploaded_file in files:
+            clean_file = super().clean(uploaded_file, initial)
+            extension = Path(clean_file.name).suffix.lower()
+            if extension not in {".jpg", ".jpeg", ".png", ".webp", ".pdf"}:
+                raise forms.ValidationError("Yalnızca JPG, PNG, WEBP veya PDF dosyaları kabul edilir.")
+            if clean_file.size > 10 * 1024 * 1024:
+                raise forms.ValidationError(f"{clean_file.name}: dosya boyutu 10 MB sınırını aşamaz.")
+
+            signature = clean_file.read(16)
+            clean_file.seek(0)
+            valid_signature = (
+                (extension in {".jpg", ".jpeg"} and signature.startswith(b"\xff\xd8\xff"))
+                or (extension == ".png" and signature.startswith(b"\x89PNG\r\n\x1a\n"))
+                or (extension == ".webp" and signature.startswith(b"RIFF") and signature[8:12] == b"WEBP")
+                or (extension == ".pdf" and signature.startswith(b"%PDF-"))
+            )
+            if not valid_signature:
+                raise forms.ValidationError(f"{clean_file.name}: dosya uzantısı ve içeriği eşleşmiyor.")
+            total_size += clean_file.size
+            cleaned_files.append(clean_file)
+
+        if total_size > 25 * 1024 * 1024:
+            raise forms.ValidationError("Bir seferde yüklenen dosyaların toplamı 25 MB sınırını aşamaz.")
+        return cleaned_files
+
+
 class IssueCreateForm(forms.ModelForm):
+    attachments = IssueAttachmentFilesField(
+        label="Fotoğraf veya dosya",
+        required=False,
+        help_text="JPG, PNG, WEBP veya PDF. En fazla 5 dosya, dosya başına 10 MB. Mac'te ⌘ tuşunu, Windows'ta Ctrl tuşunu basılı tutarak birden fazla dosya seçebilirsin.",
+        widget=MultipleFileInput(attrs={"accept": ".jpg,.jpeg,.png,.webp,.pdf", "data-multiple-file-input": "true"}),
+    )
+
     class Meta:
         model = Issue
         fields = ("device", "title", "description", "priority")
@@ -23,6 +75,25 @@ class IssueCreateForm(forms.ModelForm):
     def __init__(self, *args, devices, **kwargs):
         super().__init__(*args, **kwargs)
         self.fields["device"].queryset = devices
+
+
+class IssueAttachmentForm(forms.Form):
+    attachments = IssueAttachmentFilesField(
+        label="Dosyalar",
+        required=True,
+        help_text="JPG, PNG, WEBP veya PDF. En fazla 5 dosya, dosya başına 10 MB. Mac'te ⌘ tuşunu, Windows'ta Ctrl tuşunu basılı tutarak birden fazla dosya seçebilirsin.",
+        widget=MultipleFileInput(attrs={"accept": ".jpg,.jpeg,.png,.webp,.pdf", "data-multiple-file-input": "true"}),
+    )
+
+    def __init__(self, *args, allow_internal=False, **kwargs):
+        super().__init__(*args, **kwargs)
+        self.allow_internal = allow_internal
+        if allow_internal:
+            self.fields["is_internal"] = forms.BooleanField(
+                label="Yalnızca IT ekibi görsün",
+                required=False,
+                initial=False,
+            )
 
 
 class IssueInternalNoteForm(forms.Form):

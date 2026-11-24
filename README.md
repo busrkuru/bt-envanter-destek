@@ -16,6 +16,7 @@
 - Kullanıcının aynı birimdeki seçili çalışanları arıza talebine katılımcı olarak ekleyebilmesi.
 - Talep sahibi, katılımcılar ve yetkili IT ekibi arasında kullanıcıya açık yanıtlaşma; yalnızca IT ekibinin görebildiği iç notlar.
 - Yeni arıza, atama, durum değişikliği, yanıt ve talep paylaşımı için uygulama içi bildirimler.
+- Arıza kayıtlarına JPG, PNG, WEBP ve PDF dosyaları eklenebilir. İndirme erişimi arıza kaydının yetki kapsamına göre denetlenir; yüklemeler `private_media/` altında tutulur.
 - Beklemeye alınan arızalarda kullanıcıdan beklenen bilgi veya işlemi açıklayan not gösterme.
 - Çözümün kullanıcı tarafından onaylanması veya sorun sürüyorsa yeniden açılması.
 - Cihaz ve arıza raporları ile CSV dışa aktarımları.

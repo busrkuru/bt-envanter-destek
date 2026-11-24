@@ -9,8 +9,17 @@
   <a class="button" href="{% url 'inventory:issue_create' %}">Yeni arıza bildir</a>
 </div>
 
+{% if can_manage %}
+<nav class="issue-views" aria-label="Arıza görünümü">
+  <a class="button{% if not selected_view %} is-selected{% else %} secondary-button{% endif %}" href="{% url 'inventory:issue_list' %}"{% if not selected_view %} aria-current="page"{% endif %}>Tüm kayıtlar</a>
+  <a class="button{% if selected_view == 'mine' %} is-selected{% else %} secondary-button{% endif %}" href="?view=mine"{% if selected_view == 'mine' %} aria-current="page"{% endif %}>Bana atananlar</a>
+  <a class="button{% if selected_view == 'queue' %} is-selected{% else %} secondary-button{% endif %}" href="?view=queue"{% if selected_view == 'queue' %} aria-current="page"{% endif %}>Ekip kuyruğu</a>
+</nav>
+{% endif %}
+
 <section class="panel">
   <form class="filter-form" method="get" role="search">
+    {% if selected_view %}<input type="hidden" name="view" value="{{ selected_view }}">{% endif %}
     <div class="filter-search">
       <label for="issue-search">{% if can_manage %}Bildirimlerde ara{% else %}Bildirimlerimde ara{% endif %}</label>
       <input id="issue-search" type="search" name="q" value="{{ query }}" placeholder="Konu, açıklama veya demirbaş numarası{% if can_manage %}, bildiren kişi{% endif %}">
@@ -24,12 +33,12 @@
       <select id="issue-priority" name="priority"><option value="">Tüm öncelikler</option>{% for value, label in priority_choices %}<option value="{{ value }}"{% if selected_priority == value %} selected{% endif %}>{{ label }}</option>{% endfor %}</select>
     </div>
     {% if can_manage %}<div><label for="issue-team">Ekip</label><select id="issue-team" name="team"><option value="">Tüm ekipler</option>{% for team in team_choices %}<option value="{{ team.pk }}"{% if selected_team_id == team.pk %} selected{% endif %}>{{ team.department.name }} · {{ team.name }}</option>{% endfor %}</select></div>{% endif %}
-    <div class="filter-actions"><button class="button" type="submit">Uygula</button>{% if query or selected_status or selected_priority or selected_team %}<a class="button secondary-button" href="{% url 'inventory:issue_list' %}">Temizle</a>{% endif %}</div>
+    <div class="filter-actions"><button class="button" type="submit">Uygula</button>{% if query or selected_status or selected_priority or selected_team or selected_view %}<a class="button secondary-button" href="{% url 'inventory:issue_list' %}">Temizle</a>{% endif %}</div>
   </form>
 </section>
 
 <section class="panel">
-  <p class="table-caption">Toplam {{ page_obj.paginator.count }} kayıt</p>
+  <p class="table-caption">{% if selected_view == 'mine' %}Sana atanan{% elif selected_view == 'queue' %}Ekip kuyruğundaki{% else %}Toplam{% endif %} {{ page_obj.paginator.count }} kayıt</p>
   <div class="table-wrap"><table>
     <thead><tr><th scope="col">Konu</th><th scope="col">Cihaz</th>{% if can_manage %}<th scope="col">Bildiren</th><th scope="col">Ekip</th><th scope="col">Atanan IT sorumlusu</th>{% endif %}<th scope="col">Durum</th><th scope="col">Öncelik</th><th scope="col">Açılma tarihi</th>{% if can_manage %}<th scope="col">İşlem</th>{% endif %}</tr></thead>
     <tbody>
@@ -44,16 +53,16 @@
         {% if can_manage %}<td>{% if issue.status == "new" %}{% if not issue.assigned_to_id or issue.assigned_to_id == request.user.pk %}<form method="post" action="{% url 'inventory:issue_detail' issue_id=issue.pk %}" class="quick-start-form">{% csrf_token %}<input type="hidden" name="action" value="quick_start"><button class="button quick-start-button" type="submit">Üstlen ve işe başla</button></form>{% else %}<span class="sub">{{ issue.assigned_to }} işlem başlatacak</span>{% endif %}{% else %}<a href="{% url 'inventory:issue_detail' issue_id=issue.pk %}">Aç</a>{% endif %}</td>{% endif %}
       </tr>
       {% empty %}<tr><td colspan="{% if can_manage %}9{% else %}5{% endif %}" class="empty">
-        {% if query or selected_status or selected_priority or selected_team %}Bu arama ve süzgeçlerle eşleşen bildirim yok. Süzgeçleri temizleyip yeniden deneyebilirsin.{% elif can_manage %}Yetki kapsamındaki veya ekiplerine yönlendirilen bildirim bulunmuyor.{% else %}Henüz arıza bildirimin bulunmuyor. Sorun yaşadığın cihazdan yeni bildirim açabilirsin.{% endif %}
+        {% if query or selected_status or selected_priority or selected_team or selected_view %}Bu arama ve süzgeçlerle eşleşen bildirim yok. Süzgeçleri temizleyip yeniden deneyebilirsin.{% elif can_manage %}Yetki kapsamındaki veya ekiplerine yönlendirilen bildirim bulunmuyor.{% else %}Henüz arıza bildirimin bulunmuyor. Sorun yaşadığın cihazdan yeni bildirim açabilirsin.{% endif %}
       </td></tr>{% endfor %}
     </tbody>
   </table></div>
 
   {% if page_obj.paginator.num_pages > 1 %}
   <nav class="pagination" aria-label="Bildirim sayfaları">
-    {% if page_obj.has_previous %}<a class="button secondary-button" href="?q={{ query|urlencode }}&status={{ selected_status|urlencode }}&priority={{ selected_priority|urlencode }}&team={{ selected_team|urlencode }}&page={{ page_obj.previous_page_number }}">Önceki</a>{% endif %}
+    {% if page_obj.has_previous %}<a class="button secondary-button" href="?q={{ query|urlencode }}&status={{ selected_status|urlencode }}&priority={{ selected_priority|urlencode }}&team={{ selected_team|urlencode }}&view={{ selected_view|urlencode }}&page={{ page_obj.previous_page_number }}">Önceki</a>{% endif %}
     <span>Sayfa {{ page_obj.number }} / {{ page_obj.paginator.num_pages }}</span>
-    {% if page_obj.has_next %}<a class="button secondary-button" href="?q={{ query|urlencode }}&status={{ selected_status|urlencode }}&priority={{ selected_priority|urlencode }}&team={{ selected_team|urlencode }}&page={{ page_obj.next_page_number }}">Sonraki</a>{% endif %}
+    {% if page_obj.has_next %}<a class="button secondary-button" href="?q={{ query|urlencode }}&status={{ selected_status|urlencode }}&priority={{ selected_priority|urlencode }}&team={{ selected_team|urlencode }}&view={{ selected_view|urlencode }}&page={{ page_obj.next_page_number }}">Sonraki</a>{% endif %}
   </nav>
   {% endif %}
 </section>

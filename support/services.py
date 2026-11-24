@@ -63,10 +63,10 @@ def notify_assignment_changed(issue, actor):
     assignee = issue.assigned_to if issue.assigned_to_id else None
     if assignee:
         recipients = [assignee]
-        message = f"{issue.title} arızası size atandı."
+        message = f"{issue.title} kaydı size atandı."
     else:
         recipients = _support_users(issue)
-        message = f"{issue.title} arızası ekibinizin kuyruğuna yönlendirildi."
+        message = f"{issue.title} kaydı ekibinizin kuyruğuna yönlendirildi."
     _create_notifications(issue, actor, recipients, Notification.Event.ASSIGNMENT, message)
 
 
@@ -74,15 +74,15 @@ def notify_public_activity(issue, actor, event):
     if getattr(actor, "role", None) == "unit_user":
         recipients = _assigned_support_users(issue)
         if event == Notification.Event.REPLY:
-            message = f"{issue.title} talebine kullanıcı yanıt verdi."
+            message = f"{issue.title} kaydına kullanıcı yanıt verdi."
         else:
-            message = f"{issue.title} talebinin durumu kullanıcı tarafından güncellendi."
+            message = f"{issue.title} kaydı kullanıcı tarafından {issue.get_status_display()} durumuna alındı."
     else:
         recipients = _requester_users(issue)
         if event == Notification.Event.REPLY:
-            message = f"{issue.title} talebine yeni bir IT yanıtı eklendi."
+            message = f"{issue.title} kaydına IT ekibi yanıt verdi."
         else:
-            message = f"{issue.title} talebinin durumu: {issue.get_status_display()}."
+            message = f"{issue.title} kaydının durumu {issue.get_status_display()} olarak güncellendi."
     _create_notifications(issue, actor, recipients, event, message)
 
 
@@ -92,8 +92,21 @@ def notify_shared_users(issue, actor, users):
         actor,
         users,
         Notification.Event.SHARED,
-        f"{issue.title} arıza talebi sizinle paylaşıldı.",
+        f"{issue.title} kaydı sizinle paylaşıldı.",
     )
+
+
+def notify_attachment_added(issue, actor, is_internal=False):
+    if is_internal:
+        recipients = _support_users(issue)
+        message = f"{issue.title} kaydına IT iç eki eklendi."
+    elif getattr(actor, "role", None) == "unit_user":
+        recipients = _assigned_support_users(issue)
+        message = f"{issue.title} kaydına kullanıcı dosya ekledi."
+    else:
+        recipients = _requester_users(issue)
+        message = f"{issue.title} kaydına yeni dosya eklendi."
+    _create_notifications(issue, actor, recipients, Notification.Event.ATTACHMENT, message)
 
 
 def visible_notifications_for(user):

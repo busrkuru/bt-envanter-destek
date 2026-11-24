@@ -71,10 +71,15 @@ def visible_issues_for(user):
         return Issue.objects.all()
     if is_it_manager(user):
         team_ids = it_units_for(user).values("pk")
+        unrouted_scope = Q(pk__in=[])
+        for department_id, unit_id in user.scopes.values_list("department_id", "unit_id"):
+            if unit_id:
+                unrouted_scope |= Q(device__department_id=department_id, device__unit_id=unit_id)
+            else:
+                unrouted_scope |= Q(device__department_id=department_id)
         return Issue.objects.filter(
             Q(assigned_unit_id__in=team_ids)
-            | Q(assigned_to_id=user.pk)
-            | Q(assigned_unit__isnull=True, device__in=scoped_devices(user))
+            | (Q(assigned_unit__isnull=True) & unrouted_scope)
         ).distinct()
     if getattr(user, "role", None) == "unit_user":
         eligible_units = user.scopes.filter(unit__isnull=False).values("unit_id")

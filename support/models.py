@@ -1,8 +1,15 @@
 from django.conf import settings
 from django.db import models
+from pathlib import Path
+from uuid import uuid4
 
 from inventory.models import Device
 from organization.models import Unit
+
+
+def issue_attachment_upload_path(instance, filename):
+    extension = Path(filename).suffix.lower()
+    return f"issue-attachments/{instance.issue_id}/{uuid4().hex}{extension}"
 
 
 class Issue(models.Model):
@@ -108,6 +115,37 @@ class IssueParticipant(models.Model):
         return f"{self.user} — {self.issue}"
 
 
+class IssueAttachment(models.Model):
+    issue = models.ForeignKey(
+        Issue,
+        on_delete=models.CASCADE,
+        related_name="attachments",
+        verbose_name="Arıza bildirimi",
+    )
+    uploaded_by = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        on_delete=models.PROTECT,
+        related_name="issue_attachments",
+        verbose_name="Yükleyen kullanıcı",
+    )
+    file = models.FileField(upload_to=issue_attachment_upload_path, verbose_name="Dosya")
+    original_name = models.CharField(max_length=255, verbose_name="Dosya adı")
+    is_internal = models.BooleanField(default=False, verbose_name="Yalnızca IT ekibine görünür")
+    created_at = models.DateTimeField(auto_now_add=True, verbose_name="Yüklenme tarihi")
+
+    class Meta:
+        ordering = ["created_at", "pk"]
+        verbose_name = "Arıza eki"
+        verbose_name_plural = "Arıza ekleri"
+
+    def __str__(self):
+        return f"{self.original_name} — {self.issue}"
+
+    @property
+    def is_previewable_image(self):
+        return Path(self.original_name).suffix.lower() in {".jpg", ".jpeg", ".png", ".webp"}
+
+
 class Notification(models.Model):
     class Event(models.TextChoices):
         NEW_ISSUE = "new_issue", "Yeni arıza"
@@ -115,6 +153,7 @@ class Notification(models.Model):
         STATUS = "status", "Durum değişikliği"
         REPLY = "reply", "Yeni yanıt"
         SHARED = "shared", "Talep paylaşımı"
+        ATTACHMENT = "attachment", "Yeni dosya eki"
 
     recipient = models.ForeignKey(
         settings.AUTH_USER_MODEL,

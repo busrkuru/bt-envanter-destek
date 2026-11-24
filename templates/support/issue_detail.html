@@ -56,6 +56,52 @@
   </section>
 </div>
 
+{% if attachments or can_attach %}
+<section class="panel">
+  <h2>Dosya ve fotoğraflar</h2>
+  <p class="sub">Görselleri büyütmek için önizlemeye tıkla. Ekleri yalnızca bu talebi görüntüleme yetkisi olan kişiler açabilir.</p>
+  {% if attachments %}
+  <ul class="attachment-list">
+    {% for attachment in attachments %}
+      <li class="attachment-card">
+        {% if attachment.is_previewable_image %}
+          <button class="attachment-preview-trigger" type="button" data-preview-url="{% url 'inventory:issue_attachment_preview' issue_id=issue.pk attachment_id=attachment.pk %}" data-preview-alt="{{ attachment.original_name }}" aria-haspopup="dialog">
+            <img class="attachment-thumbnail" src="{% url 'inventory:issue_attachment_preview' issue_id=issue.pk attachment_id=attachment.pk %}" alt="" loading="lazy">
+            <span>Görseli büyüt</span>
+          </button>
+        {% else %}
+          <span class="attachment-file-type" aria-hidden="true">PDF</span>
+        {% endif %}
+        <a class="attachment-name" href="{% url 'inventory:issue_attachment_download' issue_id=issue.pk attachment_id=attachment.pk %}">{{ attachment.original_name }}</a>
+        {% if can_manage and attachment.is_internal %}<span class="pill">Yalnızca IT</span>{% endif %}
+        <small>{{ attachment.uploaded_by.get_full_name|default:attachment.uploaded_by.username }} · {{ attachment.created_at|date:"d.m.Y H:i" }}</small>
+      </li>
+    {% endfor %}
+  </ul>
+  <dialog class="attachment-dialog" id="attachment-preview-dialog" aria-labelledby="attachment-preview-title">
+    <div class="attachment-dialog-header">
+      <h2 id="attachment-preview-title"></h2>
+      <button class="button secondary-button" type="button" data-preview-close>Kapat</button>
+    </div>
+    <img class="attachment-dialog-image" alt="" data-preview-image>
+  </dialog>
+  {% else %}<p class="empty">Bu talebe henüz dosya eklenmedi.</p>{% endif %}
+  {% if can_attach %}
+  <form method="post" enctype="multipart/form-data" class="form-stack attachment-form">
+    {% csrf_token %}<input type="hidden" name="action" value="upload_attachments">
+    {% for field in attachment_form %}<div class="form-field{% if field.errors %} field-has-error{% endif %}">
+      <label class="field-label" for="{{ field.id_for_label }}">{{ field.label }}</label>
+      {{ field }}
+      {% if field.help_text %}<small class="field-help">{{ field.help_text }}</small>{% endif %}
+      {% if field.errors %}<div class="form-error" role="alert">{{ field.errors }}</div>{% endif %}
+    </div>{% endfor %}
+    <div class="file-selection-summary" data-file-selection aria-live="polite"></div>
+    <button class="button" type="submit">Dosyaları ekle</button>
+  </form>
+  {% endif %}
+</section>
+{% endif %}
+
 {% if can_manage or can_share or is_participant %}
 <section class="panel">
   <h2>Talep katılımcıları</h2>
@@ -64,16 +110,17 @@
     {% for participant in issue_participants %}<li>{{ participant.user.get_full_name|default:participant.user.username }}</li>{% endfor %}
   </ul>{% else %}<p class="empty">Henüz başka katılımcı eklenmedi.</p>{% endif %}
   {% if can_share %}
-  <form method="post" class="participant-form">
-    {% csrf_token %}<input type="hidden" name="action" value="share">
-    <div class="form-field">
-      <label class="field-label" for="id_participants">{{ share_form.participants.label }}</label>
-      {{ share_form.participants }}{{ share_form.participants.errors }}
-      {% if share_form.participants.help_text %}<small>{{ share_form.participants.help_text }}</small>{% endif %}
-      {% if not has_share_candidates %}<small>Bu cihazın biriminde paylaşım için uygun başka kullanıcı bulunmuyor.</small>{% endif %}
-    </div>
-    <button class="button" type="submit">Katılımcıları kaydet</button>
-  </form>
+    {% if has_share_candidates %}
+    <form method="post" class="participant-form">
+      {% csrf_token %}<input type="hidden" name="action" value="share">
+      <div class="form-field">
+        <label class="field-label" for="id_participants">{{ share_form.participants.label }}</label>
+        {{ share_form.participants }}{{ share_form.participants.errors }}
+        {% if share_form.participants.help_text %}<small>{{ share_form.participants.help_text }}</small>{% endif %}
+      </div>
+      <button class="button" type="submit">Katılımcıları kaydet</button>
+    </form>
+    {% else %}<p class="empty">Bu cihazın biriminde henüz paylaşım için uygun başka kullanıcı hesabı yok. Aynı birime aktif kullanıcı eklendiğinde burada seçebilirsin.</p>{% endif %}
   {% endif %}
 </section>
 {% endif %}
@@ -157,6 +204,26 @@
   </form>
 </details>
 {% endif %}
+{% if attachments %}<script>
+  (() => {
+    const dialog = document.getElementById("attachment-preview-dialog");
+    const image = dialog && dialog.querySelector("[data-preview-image]");
+    const title = dialog && dialog.querySelector("#attachment-preview-title");
+    if (!dialog || !image || !title) return;
+    document.querySelectorAll("[data-preview-url]").forEach((button) => {
+      button.addEventListener("click", () => {
+        image.src = button.dataset.previewUrl;
+        image.alt = button.dataset.previewAlt || "Ekli görsel";
+        title.textContent = button.dataset.previewAlt || "Ekli görsel";
+        dialog.showModal();
+      });
+    });
+    dialog.querySelector("[data-preview-close]").addEventListener("click", () => dialog.close());
+    dialog.addEventListener("click", (event) => {
+      if (event.target === dialog) dialog.close();
+    });
+  })();
+</script>{% endif %}
 {% if can_manage %}<script>
   (() => {
     const team = document.getElementById("id_assigned_unit");

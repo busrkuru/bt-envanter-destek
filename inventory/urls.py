@@ -14,4 +14,6 @@ urlpatterns = [
     path("arizalar/", views.issue_list, name="issue_list"),
     path("arizalar/yeni/", views.issue_create, name="issue_create"),
     path("arizalar/<int:issue_id>/", views.issue_detail, name="issue_detail"),
+    path("arizalar/<int:issue_id>/ekler/<int:attachment_id>/", views.issue_attachment_download, name="issue_attachment_download"),
+    path("arizalar/<int:issue_id>/ekler/<int:attachment_id>/onizle/", views.issue_attachment_preview, name="issue_attachment_preview"),
 ]

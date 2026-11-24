@@ -4,7 +4,7 @@
 <section class="welcome">
   <div>
     <h1>Genel bakış</h1>
-    <p class="sub">{% if request.user.role == "unit_user" %}Cihazlarını ve arıza bildirimlerinin durumunu buradan takip edebilirsin.{% else %}Yetki kapsamındaki cihazları ve destek kayıtlarını buradan takip edebilirsin.{% endif %}</p>
+    <p class="sub">{% if request.user.role == "unit_user" %}Cihazlarını ve arıza bildirimlerinin durumunu buradan takip edebilirsin.{% elif request.user.role == "admin" %}Tüm cihazları ve arıza kayıtlarını buradan takip edip yönetebilirsin.{% else %}Yetki kapsamındaki cihazları, ekibinin kuyruğunu ve sana atanan işleri buradan takip edebilirsin.{% endif %}</p>
   </div>
   <div class="actions">
     <a class="button" href="{% url 'inventory:issue_create' %}">Arıza bildir</a>
@@ -17,6 +17,10 @@
   <a class="card card-link" href="{% url 'inventory:device_list' %}"><span>Kullanımdaki cihazlar</span><strong>{{ active_device_count }}</strong></a>
   <a class="card card-link" href="{% url 'inventory:device_list' %}?status=repair"><span>Onarımdaki cihazlar</span><strong>{{ repair_count }}</strong></a>
   <a class="card card-link" href="{% url 'inventory:issue_list' %}"><span>Açık arıza bildirimleri</span><strong>{{ open_issue_count }}</strong></a>
+  {% if request.user.role != "unit_user" %}
+  <a class="card card-link" href="{% url 'inventory:issue_list' %}?view=mine"><span>Sana atanan açık işler</span><strong>{{ my_assigned_issue_count }}</strong></a>
+  <a class="card card-link" href="{% url 'inventory:issue_list' %}?view=queue"><span>Ekip kuyruğunda</span><strong>{{ team_queue_issue_count }}</strong></a>
+  {% endif %}
 </section>
 
 <section class="panel">
@@ -51,10 +55,13 @@
 
   <section class="panel">
     <h2>Hızlı işlemler</h2>
-    <p class="sub">{% if request.user.role == "unit_user" %}Cihazınla ilgili sorun bildir veya açık bildirimlerinin durumunu takip et.{% else %}Cihaz envanterini ve destek kayıtlarını yönet.{% endif %}</p>
+    <p class="sub">{% if request.user.role == "unit_user" %}Cihazınla ilgili sorun bildir veya açık bildirimlerinin durumunu takip et.{% elif request.user.role == "admin" %}Cihazları ve tüm destek kayıtlarını yönet.{% else %}Sana atanan işleri aç veya yeni bildirimleri ekip kuyruğundan üstlen.{% endif %}</p>
     <div class="actions">
-      <a class="button" href="{% url 'inventory:issue_create' %}">Yeni arıza bildir</a>
-      <a class="button secondary-button" href="{% url 'inventory:issue_list' %}">Arıza bildirimlerini aç</a>
+      {% if request.user.role == "unit_user" %}<a class="button" href="{% url 'inventory:issue_create' %}">Yeni arıza bildir</a>{% else %}
+      <a class="button" href="{% url 'inventory:issue_list' %}?view=mine">Bana atanan işleri aç</a>
+      <a class="button secondary-button" href="{% url 'inventory:issue_list' %}?view=queue">Ekip kuyruğunu aç</a>
+      {% endif %}
+      <a class="button secondary-button" href="{% url 'inventory:issue_list' %}">{% if request.user.role == "unit_user" %}Arıza bildirimlerime git{% else %}Tüm bildirimleri aç{% endif %}</a>
       {% if request.user.role != "unit_user" %}<a class="button secondary-button" href="{% url 'inventory:reports' %}">Raporları görüntüle</a>{% endif %}
     </div>
   </section>

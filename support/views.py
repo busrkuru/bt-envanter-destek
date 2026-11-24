@@ -9,13 +9,18 @@ from .services import visible_notifications_for
 @login_required
 def notification_list(request):
     notifications = visible_notifications_for(request.user)
+    selected_filter = request.GET.get("filter", "all")
+    if selected_filter == "unread":
+        notifications = notifications.filter(read_at__isnull=True)
+    else:
+        selected_filter = "all"
     if request.method == "POST" and request.POST.get("action") == "mark_all_read":
-        notifications.filter(read_at__isnull=True).update(read_at=timezone.now())
+        visible_notifications_for(request.user).filter(read_at__isnull=True).update(read_at=timezone.now())
         return redirect("support:notification_list")
     return render(
         request,
         "support/notification_list.html",
-        {"notifications": notifications[:100]},
+        {"notifications": notifications[:100], "selected_filter": selected_filter},
     )
 
 
