@@ -186,6 +186,7 @@ USE_TZ = True
 
 STATIC_URL = 'static/'
 MEDIA_ROOT = BASE_DIR / 'private_media'
+QR_BASE_URL = os.environ.get('QR_BASE_URL', '').strip().rstrip('/')
 
 AUTH_USER_MODEL = 'accounts.User'
 LANGUAGE_CODE = 'tr'

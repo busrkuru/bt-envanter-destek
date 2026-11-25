@@ -8,6 +8,7 @@
   </div>
   <div class="actions">
     <a class="button secondary-button" href="{% url 'inventory:device_list' %}">Cihaz listesine dön</a>
+    <a class="button secondary-button" href="{% url 'inventory:device_qr_label' device_id=device.pk %}">QR etiketi</a>
     {% if request.user.is_staff %}<a class="button secondary-button" href="{% url 'admin:inventory_device_change' device.pk %}">Cihaz kaydını yönet</a>{% endif %}
     <a class="button" href="{% url 'inventory:issue_create' %}?device={{ device.pk }}">Bu cihaz için arıza bildir</a>
   </div>

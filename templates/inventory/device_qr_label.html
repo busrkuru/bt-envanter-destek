@@ -1,0 +1,56 @@
+{% extends "base.html" %}
+{% block title %}{{ device.asset_tag }} | QR etiketi{% endblock %}
+{% block content %}
+<div class="detail-heading no-print">
+  <div>
+    <h1>Cihaz QR etiketi</h1>
+    <p class="sub">QR kodu tarayan kişi giriş yaptıktan sonra yetkisi varsa bu cihaz kaydını açar.</p>
+  </div>
+  <div class="actions">
+    <a class="button secondary-button" href="{% url 'inventory:device_detail' device_id=device.pk %}">Cihaza dön</a>
+    <button class="button" type="button" onclick="window.print()">Etiketi yazdır</button>
+  </div>
+</div>
+
+<section class="panel qr-label">
+  <img class="qr-image" src="data:image/png;base64,{{ qr_image_base64 }}" alt="{{ device.asset_tag }} cihazına ait QR kod">
+  <div class="qr-label-info">
+    <p class="qr-label-kicker">BT ENVANTER</p>
+    <h2>{{ device.asset_tag }}</h2>
+    <p>{{ device.device_type }}{% if device.brand or device.model_name %}<br>{{ device.brand }} {{ device.model_name }}{% endif %}</p>
+    {% if device.unit %}<p>{{ device.unit.name }}</p>{% endif %}
+  </div>
+</section>
+
+<section class="panel no-print">
+  <h2>Bu kod ne yapar?</h2>
+  <p>QR kod cihaz bilgilerini içermez; yalnızca cihaz sayfasının adresini taşır. Sayfayı açmak için giriş gerekir ve mevcut departman/birim yetkileri uygulanır.</p>
+  <p class="table-caption">Kodun hedef adresi: <code>{{ qr_target_url }}</code></p>
+  <p class="table-caption">Bu yerel test adresi yalnızca bu bilgisayardan erişilebilir olabilir. Kalıcı etiketleri sunucu adresi belirlendikten sonra basın.</p>
+</section>
+
+<style>
+  .qr-label { display: flex; align-items: center; gap: 18px; width: min(100%, 520px); margin-top: 20px; }
+  .qr-image { display: block; width: 180px; height: 180px; flex: 0 0 180px; image-rendering: pixelated; }
+  .qr-label-info { min-width: 0; }
+  .qr-label-info h2 { margin: 0 0 6px; overflow-wrap: anywhere; font-size: 1.4rem; }
+  .qr-label-info p { margin: 4px 0; }
+  .qr-label-kicker { color: #5b6d76; font-size: .75rem; font-weight: 750; letter-spacing: .08em; }
+  .table-caption code { overflow-wrap: anywhere; }
+  @media (max-width: 480px) {
+    .qr-label { align-items: flex-start; gap: 12px; padding: 14px; }
+    .qr-image { width: 130px; height: 130px; flex-basis: 130px; }
+    .qr-label-info h2 { font-size: 1.1rem; }
+  }
+  @media print {
+    @page { size: 90mm 55mm; margin: 3mm; }
+    body { background: white; }
+    header, .no-print { display: none !important; }
+    main { width: auto; max-width: none; margin: 0; padding: 0; }
+    .qr-label { width: 84mm; height: 49mm; margin: 0; padding: 2mm; border: 0; border-radius: 0; box-shadow: none; gap: 3mm; }
+    .qr-image { width: 43mm; height: 43mm; flex-basis: 43mm; }
+    .qr-label-info { font-size: 9pt; }
+    .qr-label-info h2 { font-size: 14pt; }
+  }
+</style>
+{% endblock %}

@@ -8,6 +8,7 @@
 
 - Cihazları demirbaş numarası, cihaz türü, marka/model, seri numarası, IP/MAC adresi, departman ve birim bilgileriyle kaydetme.
 - Cihazlara ait RAM gibi bileşenleri, teknik özellikleri ve değişim geçmişini tutma.
+- Yetkili kullanıcıların cihaz ayrıntı sayfasından QR etiketi oluşturup yazdırabilmesi; QR yalnızca cihaz bağlantısını taşır ve açılışta giriş/yetki kapsamı denetlenir.
 - Cihazları çalışanlara atama, devir ve teslim tarihlerini atama geçmişinde izleme.
 - Fatura ve garanti bilgilerini kaydetme.
 - Kullanıcıların erişim kapsamındaki cihazlarda arıza bildirimi oluşturması ve kendi bildirimlerinin durumunu takip etmesi.
@@ -39,6 +40,12 @@ Yeni departman veya birim eklerken önce organizasyon kaydı oluşturulur, sonra
 5. Kullanıcıdan bilgi veya işlem gerekiyorsa kayıt, açıklama notuyla **Beklemede** durumuna alınır. Çözüm sunulduğunda bildiren kullanıcı kaydı kapatabilir veya sorun sürüyorsa yeniden açabilir.
 
 Durum geçmişinde değişikliği yapan kişi, tarih ve varsa açıklama notu gösterilir.
+
+## Cihaz QR etiketleri
+
+Cihaz ayrıntı sayfasındaki **QR etiketi** düğmesi, o cihaza giden yazdırılabilir bir etiket üretir. QR kod cihaz bilgisi veya kullanıcı bilgisi içermez; yalnızca cihaz ayrıntı adresini taşır. Adresi açan kişinin oturum açması ve o cihazı görme yetkisi olması gerekir.
+
+`QR_BASE_URL` ortam değişkeni boş bırakılırsa etiket, sayfanın o anda açıldığı adresi kullanır. Yerel testte üretilen kodlar `localhost` veya bilgisayarın geçici yerel IP adresini içerebilir. Kalıcı etiketleri, uygulama sunucuya kurulduktan ve sabit adres belirlendikten sonra basın; gerekiyorsa `QR_BASE_URL` değerini bu adrese ayarlayın.
 
 ## Teknoloji ve gereksinimler
 

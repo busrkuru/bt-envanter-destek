@@ -1,8 +1,12 @@
+import base64
 import csv
+from io import BytesIO
 from datetime import timedelta
 from pathlib import Path
 
+import qrcode
 from django.contrib.auth.decorators import login_required
+from django.conf import settings
 from django.core.exceptions import PermissionDenied
 from django.core.paginator import Paginator
 from django.db import transaction
@@ -10,6 +14,7 @@ from django.db.models import CharField, Count, Prefetch, Q
 from django.db.models.functions import Cast
 from django.http import FileResponse, Http404, HttpResponse
 from django.shortcuts import get_object_or_404, redirect, render
+from django.urls import reverse
 from django.utils import timezone
 
 from organization.access import (
@@ -174,6 +179,33 @@ def device_detail(request, device_id):
             "invoices": invoices,
             "issues": issues,
             "can_view_internal_history": can_view_internal_history,
+        },
+    )
+
+
+@login_required
+def device_qr_label(request, device_id):
+    device = get_object_or_404(scoped_devices_for(request.user), pk=device_id)
+    detail_path = reverse("inventory:device_detail", kwargs={"device_id": device.pk})
+    qr_base_url = getattr(settings, "QR_BASE_URL", "")
+    target_url = (
+        f"{qr_base_url}{detail_path}"
+        if qr_base_url
+        else request.build_absolute_uri(detail_path)
+    )
+
+    qr_image = qrcode.make(target_url, box_size=8, border=3)
+    image_buffer = BytesIO()
+    qr_image.save(image_buffer, format="PNG")
+    qr_image_base64 = base64.b64encode(image_buffer.getvalue()).decode("ascii")
+
+    return render(
+        request,
+        "inventory/device_qr_label.html",
+        {
+            "device": device,
+            "qr_image_base64": qr_image_base64,
+            "qr_target_url": target_url,
         },
     )
 
